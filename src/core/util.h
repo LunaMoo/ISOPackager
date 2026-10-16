@@ -25,7 +25,7 @@ bool ParseSize(const std::string &s, uint64_t *out);  // "4096", "16K", "2M", "1
 std::string HumanBytes(uint64_t bytes);
 // "1:02:03", "4:05", "12.3 s"
 std::string HumanDuration(double seconds);
-std::string Format(const char *fmt, ...)
+std::string Fmt(const char *fmt, ...)
 #if defined(__GNUC__)
 	__attribute__((format(printf, 1, 2)))
 #endif

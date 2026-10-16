@@ -149,7 +149,7 @@ ImageInfo InspectImage(const std::string &path) {
 		if (ReadHead(path, h, 24) == 24) {
 			memcpy(&info.isoSize, h + 8, 8);
 			memcpy(&info.blockSize, h + 16, 4);
-			info.detail = Format("block %u, align %u", info.blockSize, h[21]);
+			info.detail = Fmt("block %u, align %u", info.blockSize, h[21]);
 		}
 		break;
 	}
@@ -180,7 +180,7 @@ ImageInfo InspectImage(const std::string &path) {
 					codecs += "+";
 				codecs += name;
 			}
-			info.detail = Format("v%u, %s, hunk %u%s", ci.version, codecs.empty() ? "uncompressed" : codecs.c_str(), ci.hunk_bytes,
+			info.detail = Fmt("v%u, %s, hunk %u%s", ci.version, codecs.empty() ? "uncompressed" : codecs.c_str(), ci.hunk_bytes,
 				ci.kind == CHDM_KIND_DVD ? "" : ci.kind == CHDM_KIND_CDROM ? ", CD-ROM (not a UMD image)" : "");
 			if (ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM || ci.kind == CHDM_KIND_AV)
 				info.error = "not a DVD/UMD CHD";

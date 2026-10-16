@@ -10,7 +10,7 @@ namespace isopk {
 
 class File {
 public:
-	enum Mode { Read, Write /* create or truncate */ };
+	enum Mode { Read, Write /* create or truncate */, Update /* create or keep, read-write */ };
 
 	File() = default;
 	~File() { Close(); }

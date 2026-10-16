@@ -69,7 +69,7 @@ bool ParseSize(const std::string &in, uint64_t *out) {
 	return true;
 }
 
-std::string Format(const char *fmt, ...) {
+std::string Fmt(const char *fmt, ...) {
 	char buf[1024];
 	va_list va;
 	va_start(va, fmt);
@@ -94,19 +94,19 @@ std::string HumanBytes(uint64_t bytes) {
 		++u;
 	}
 	if (u == 0)
-		return Format("%llu B", (unsigned long long)bytes);
-	return Format("%.2f %s", v, units[u]);
+		return Fmt("%llu B", (unsigned long long)bytes);
+	return Fmt("%.2f %s", v, units[u]);
 }
 
 std::string HumanDuration(double s) {
 	if (s < 0)
 		return "-";
 	if (s < 60)
-		return Format("%.1f s", s);
+		return Fmt("%.1f s", s);
 	uint64_t t = (uint64_t)(s + 0.5);
 	if (t < 3600)
-		return Format("%u:%02u", (unsigned)(t / 60), (unsigned)(t % 60));
-	return Format("%u:%02u:%02u", (unsigned)(t / 3600), (unsigned)(t / 60 % 60), (unsigned)(t % 60));
+		return Fmt("%u:%02u", (unsigned)(t / 60), (unsigned)(t % 60));
+	return Fmt("%u:%02u:%02u", (unsigned)(t / 3600), (unsigned)(t / 60 % 60), (unsigned)(t % 60));
 }
 
 std::string Timestamp() {

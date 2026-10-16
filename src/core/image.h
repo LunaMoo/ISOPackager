@@ -14,6 +14,8 @@
 #include "core/fileio.h"
 #include "core/formats.h"
 
+struct chdm_file;  // CHDmodern
+
 namespace isopk {
 
 // ---- Readers ----------------------------------------------------------------------------------
@@ -66,7 +68,6 @@ private:
 	int64_t cached_ = -1;
 };
 
-struct chdm_file;
 class ChdImageReader : public ImageReader {
 public:
 	~ChdImageReader() override;

@@ -136,7 +136,7 @@ bool CsoImageReader::ReadBlock(uint32_t b, uint8_t *out) {
 #ifdef ISOPK_WITH_CSO
 		int r = LZ4_decompress_safe_partial((const char *)in_.data(), (char *)out, (int)got, (int)want, (int)blockSize_);
 		if (r < (int)want) {
-			error_ = Format("lz4 error in block %u", b);
+			error_ = Fmt("lz4 error in block %u", b);
 			return false;
 		}
 		return true;
@@ -158,7 +158,7 @@ bool CsoImageReader::ReadBlock(uint32_t b, uint8_t *out) {
 	uLong produced = z.total_out;
 	inflateEnd(&z);
 	if ((r != Z_STREAM_END && r != Z_OK && r != Z_BUF_ERROR) || produced < want) {
-		error_ = Format("deflate error in block %u", b);
+		error_ = Fmt("deflate error in block %u", b);
 		return false;
 	}
 	return true;
@@ -248,7 +248,7 @@ std::unique_ptr<ImageReader> OpenImageReader(const std::string &path, Format for
 	}
 	default:
 		if (error)
-			*error = Format("%s has no random access", FormatName(format));
+			*error = Fmt("%s has no random access", FormatName(format));
 		return nullptr;
 	}
 	if (!ok) {
@@ -322,7 +322,7 @@ bool MemoryImage::Begin(uint64_t size) {
 	}
 	if (!RamBudget::Get().Acquire(size, cancel_)) {
 		oom_ = true;
-		ImageWriter::error_ = Format("%s doesn't fit the RAM budget (%s)", HumanBytes(size).c_str(),
+		ImageWriter::error_ = Fmt("%s doesn't fit the RAM budget (%s)", HumanBytes(size).c_str(),
 			HumanBytes(RamBudget::Get().Capacity()).c_str());
 		return false;
 	}
@@ -332,7 +332,7 @@ bool MemoryImage::Begin(uint64_t size) {
 		RamBudget::Get().Release(reserved_);
 		reserved_ = 0;
 		oom_ = true;
-		ImageWriter::error_ = Format("could not allocate %s", HumanBytes(size).c_str());
+		ImageWriter::error_ = Fmt("could not allocate %s", HumanBytes(size).c_str());
 		return false;
 	}
 	size_ = size;
@@ -458,11 +458,11 @@ std::string CompareWriter::Result() const {
 	if (readFailed_)
 		return "could not read the original: " + error_;
 	if (firstMismatch_.load() != UINT64_MAX)
-		return Format("MISMATCH at byte %llu", (unsigned long long)firstMismatch_.load());
+		return Fmt("MISMATCH at byte %llu", (unsigned long long)firstMismatch_.load());
 	if (extraData_)
 		return "extra non-zero data past the end";
 	if (covered_.load() < ref_->Size())
-		return Format("decompressed image is shorter (%llu of %llu bytes)", (unsigned long long)covered_.load(),
+		return Fmt("decompressed image is shorter (%llu of %llu bytes)", (unsigned long long)covered_.load(),
 			(unsigned long long)ref_->Size());
 	return "OK";
 }
@@ -486,7 +486,7 @@ bool FileWriter::WriteAt(uint64_t offset, const void *data, size_t len) {
 }
 
 bool FileWriter::Finish(uint64_t finalSize) {
-	bool ok = file_.Truncate(finalSize);
+	bool ok = finalSize == UINT64_MAX || file_.Truncate(finalSize);
 	file_.Close();
 	return ok;
 }

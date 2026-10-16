@@ -73,6 +73,7 @@ struct Job {
 	Settings settings;  // snapshot taken when the job starts
 
 	std::atomic<bool> cancel{ false };
+	std::atomic<bool> removeWhenDone{ false };  // JobQueue: removed while running
 	std::atomic<int> phase{ (int)Phase::Idle };
 	std::atomic<double> phaseProgress{ 0.0 }, overall{ 0.0 };
 	std::atomic<int> state{ (int)JobState::Queued };

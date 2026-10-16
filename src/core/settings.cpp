@@ -111,11 +111,11 @@ std::string CsoSettings::Describe(Format f) const {
 		s = m;
 	}
 	if (f != Format::DAX)
-		s += blockSize ? Format(" %uK", blockSize / 1024) : " auto-block";
+		s += blockSize ? Fmt(" %uK", blockSize / 1024) : " auto-block";
 	if (zopfliSplits && (Flags(f) & NO_ZOPFLI) == 0)
-		s += Format(" splits%u", zopfliSplits);
+		s += Fmt(" splits%u", zopfliSplits);
 	if (precheck > 0)
-		s += Format(" precheck%.0f%%", precheck);
+		s += Fmt(" precheck%.0f%%", precheck);
 	if (forceAll)
 		s += " force-all";
 	return s;
@@ -153,7 +153,7 @@ bool ChdSettings::SetCodecs(const std::string &list) {
 }
 
 std::string ChdSettings::Describe() const {
-	return Format("%s hunk %u", CodecsString().c_str(), EffectiveHunk());
+	return Fmt("%s hunk %u", CodecsString().c_str(), EffectiveHunk());
 }
 
 const std::vector<std::string> &ChdCodecChoices() {
@@ -300,20 +300,20 @@ bool Settings::Save(const std::string &path) const {
 	fs::create_directories(U8Path(path).parent_path(), ec);
 	std::string t;
 	t += "# ISOPackager settings\n";
-	t += Format("target=%s\n", FormatKey(target));
-	t += Format("cso.preset=%s\ncso.block=%u\n", CsoPresetName(cso.preset), cso.blockSize);
-	t += Format("cso.zlib=%d\ncso.zlib_brute=%d\ncso.7zip=%d\ncso.zopfli=%d\ncso.libdeflate=%d\n", cso.zlib, cso.zlibBrute, cso.sevenZip,
+	t += Fmt("target=%s\n", FormatKey(target));
+	t += Fmt("cso.preset=%s\ncso.block=%u\n", CsoPresetName(cso.preset), cso.blockSize);
+	t += Fmt("cso.zlib=%d\ncso.zlib_brute=%d\ncso.7zip=%d\ncso.zopfli=%d\ncso.libdeflate=%d\n", cso.zlib, cso.zlibBrute, cso.sevenZip,
 		cso.zopfli, cso.libdeflate);
-	t += Format("cso.lz4=%d\ncso.lz4hc=%d\ncso.lz4_brute=%d\n", cso.lz4, cso.lz4hc, cso.lz4Brute);
-	t += Format("cso.zopfli_splits=%u\ncso.precheck=%g\ncso.force_all=%d\n", cso.zopfliSplits, cso.precheck, cso.forceAll);
-	t += Format("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
-	t += Format("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
+	t += Fmt("cso.lz4=%d\ncso.lz4hc=%d\ncso.lz4_brute=%d\n", cso.lz4, cso.lz4hc, cso.lz4Brute);
+	t += Fmt("cso.zopfli_splits=%u\ncso.precheck=%g\ncso.force_all=%d\n", cso.zopfliSplits, cso.precheck, cso.forceAll);
+	t += Fmt("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
+	t += Fmt("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
 		pbp.contentId.c_str(), pbp.startDatPng.c_str(), pbp.trimOnExtract, pbp.verifyMacs, pbp.layout == PbpLayout::File ? "file" : "folder");
-	t += Format("out.dir=%s\nout.mirror=%d\nout.conflict=%s\nout.delete_source=%d\n", out.dir.c_str(), out.mirrorTree, ConflictName(out.conflict),
+	t += Fmt("out.dir=%s\nout.mirror=%d\nout.conflict=%s\nout.delete_source=%d\n", out.dir.c_str(), out.mirrorTree, ConflictName(out.conflict),
 		out.deleteSource);
-	t += Format("engine.verify=%d\nengine.ram_repack=%d\nengine.ram_budget=%llu\nengine.temp_dir=%s\n", engine.verify, engine.repackInRam,
+	t += Fmt("engine.verify=%d\nengine.ram_repack=%d\nengine.ram_budget=%llu\nengine.temp_dir=%s\n", engine.verify, engine.repackInRam,
 		(unsigned long long)engine.ramBudget, engine.tempDir.c_str());
-	t += Format("engine.jobs=%u\nengine.threads=%u\nengine.low_priority=%d\nrecursive=%d\n", engine.jobs, engine.threads, engine.lowPriority,
+	t += Fmt("engine.jobs=%u\nengine.threads=%u\nengine.low_priority=%d\nrecursive=%d\n", engine.jobs, engine.threads, engine.lowPriority,
 		recursive);
 	File f;
 	if (!f.Open(path, File::Write))

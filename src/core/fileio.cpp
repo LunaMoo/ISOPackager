@@ -51,7 +51,7 @@ static std::string WinError(DWORD e) {
 		while (!out.empty() && (out.back() == '\n' || out.back() == '\r' || out.back() == ' '))
 			out.pop_back();
 	}
-	return out.empty() ? Format("error %lu", (unsigned long)e) : out;
+	return out.empty() ? Fmt("error %lu", (unsigned long)e) : out;
 }
 
 bool File::Open(const std::string &path, Mode mode) {
@@ -59,7 +59,7 @@ bool File::Open(const std::string &path, Mode mode) {
 	std::wstring w = U8Path(path).wstring();
 	DWORD access = mode == Read ? GENERIC_READ : (GENERIC_READ | GENERIC_WRITE);
 	DWORD share = mode == Read ? (FILE_SHARE_READ | FILE_SHARE_WRITE) : FILE_SHARE_READ;
-	DWORD disp = mode == Read ? OPEN_EXISTING : CREATE_ALWAYS;
+	DWORD disp = mode == Read ? OPEN_EXISTING : mode == Write ? CREATE_ALWAYS : OPEN_ALWAYS;
 #if defined(WINAPI_FAMILY) && WINAPI_FAMILY == WINAPI_FAMILY_APP
 	HANDLE h = CreateFile2(w.c_str(), access, share, disp, nullptr);
 #else
@@ -146,7 +146,7 @@ bool File::Truncate(uint64_t size) {
 
 bool File::Open(const std::string &path, Mode mode) {
 	Close();
-	int flags = mode == Read ? O_RDONLY : (O_RDWR | O_CREAT | O_TRUNC);
+	int flags = mode == Read ? O_RDONLY : mode == Write ? (O_RDWR | O_CREAT | O_TRUNC) : (O_RDWR | O_CREAT);
 #ifdef O_CLOEXEC
 	flags |= O_CLOEXEC;
 #endif
