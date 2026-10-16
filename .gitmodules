@@ -1,0 +1,15 @@
+[submodule "external/maxcso"]
+	path = external/maxcso
+	url = https://github.com/LunaMoo/maxcso
+[submodule "external/CHDmodern"]
+	path = external/CHDmodern
+	url = https://github.com/LunaMoo/CHDmodern
+[submodule "external/iPBP"]
+	path = external/iPBP
+	url = https://github.com/LunaMoo/iPBP
+[submodule "external/imgui"]
+	path = external/imgui
+	url = https://github.com/ocornut/imgui
+[submodule "external/SDL"]
+	path = external/SDL
+	url = https://github.com/libsdl-org/SDL

@@ -1,0 +1,22 @@
+// Force-included into CHDmodern's LZMA SDK copy (see CMakeLists.txt): gives the 2024 match finder
+// its own symbol names, so it cannot be mixed up with the 2017 one in maxcso's 7-zip encoder.
+#pragma once
+#define Bt3Zip_MatchFinder_GetMatches isopk_chdm_Bt3Zip_MatchFinder_GetMatches
+#define Bt3Zip_MatchFinder_Skip isopk_chdm_Bt3Zip_MatchFinder_Skip
+#define GetMatchesSpec1 isopk_chdm_GetMatchesSpec1
+#define GetMatchesSpecN_2 isopk_chdm_GetMatchesSpecN_2
+#define Hc3Zip_MatchFinder_GetMatches isopk_chdm_Hc3Zip_MatchFinder_GetMatches
+#define Hc3Zip_MatchFinder_Skip isopk_chdm_Hc3Zip_MatchFinder_Skip
+#define LzFindPrepare isopk_chdm_LzFindPrepare
+#define MatchFinder_Construct isopk_chdm_MatchFinder_Construct
+#define MatchFinder_Create isopk_chdm_MatchFinder_Create
+#define MatchFinder_CreateVTable isopk_chdm_MatchFinder_CreateVTable
+#define MatchFinder_Free isopk_chdm_MatchFinder_Free
+#define MatchFinder_Init isopk_chdm_MatchFinder_Init
+#define MatchFinder_Init_4 isopk_chdm_MatchFinder_Init_4
+#define MatchFinder_Init_HighHash isopk_chdm_MatchFinder_Init_HighHash
+#define MatchFinder_Init_LowHash isopk_chdm_MatchFinder_Init_LowHash
+#define MatchFinder_MoveBlock isopk_chdm_MatchFinder_MoveBlock
+#define MatchFinder_NeedMove isopk_chdm_MatchFinder_NeedMove
+#define MatchFinder_Normalize3 isopk_chdm_MatchFinder_Normalize3
+#define MatchFinder_ReadIfRequired isopk_chdm_MatchFinder_ReadIfRequired
