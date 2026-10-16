@@ -1,5 +1,6 @@
 #include "core/formats.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <chdmodern/chdmodern.h>
@@ -197,6 +198,7 @@ ImageInfo InspectImage(const std::string &path) {
 			info.isoSize = pi.iso_size;
 			info.blockSize = pi.block_basis * 2048;
 			info.discId = pi.disc_id;
+			info.discId.erase(std::remove(info.discId.begin(), info.discId.end(), '-'), info.discId.end());
 			info.title = pi.title;
 			info.detail = pi.compressed ? "LZRC" : "uncompressed";
 		} else {

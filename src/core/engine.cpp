@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -508,8 +509,43 @@ bool SamePath(const std::string &a, const std::string &b) {
 	return fs::absolute(U8Path(a), ec).lexically_normal() == fs::absolute(U8Path(b), ec).lexically_normal();
 }
 
-// "Game (2).cso" style alternative that doesn't exist yet.
-std::string UniquePath(const std::string &path, bool pbpFolder) {
+std::mutex &ClaimMutex() {
+	static std::mutex m;
+	return m;
+}
+
+std::set<std::string> &Claimed() {
+	static std::set<std::string> s;
+	return s;
+}
+
+std::string ClaimKey(const std::string &p) {
+	std::error_code ec;
+	std::string k = PathU8(fs::absolute(U8Path(p), ec).lexically_normal());
+#ifdef _WIN32
+	k = ToLower(k);
+#endif
+	return k;
+}
+
+// Holds an output path for the lifetime of a job.
+struct OutputClaim {
+	std::string key;
+	void Take(const std::string &p) {  // called with ClaimMutex held
+		key = ClaimKey(p);
+		Claimed().insert(key);
+	}
+	~OutputClaim() {
+		if (!key.empty()) {
+			std::lock_guard<std::mutex> g(ClaimMutex());
+			Claimed().erase(key);
+		}
+	}
+};
+
+// "Game (2).cso" style alternative that isn't taken yet.
+template <typename Taken>
+std::string UniquePath(const std::string &path, bool pbpFolder, Taken taken) {
 	fs::path p = U8Path(path);
 	std::error_code ec;
 	for (int i = 2; i < 10000; ++i) {
@@ -520,7 +556,7 @@ std::string UniquePath(const std::string &path, bool pbpFolder) {
 		} else {
 			cand = p.parent_path() / U8Path(PathU8(p.stem()) + Fmt(" (%d)", i) + PathU8(p.extension()));
 		}
-		if (!fs::exists(cand, ec))
+		if (!taken(PathU8(cand)))
 			return PathU8(cand);
 	}
 	return path;
@@ -601,13 +637,21 @@ void RunJob(Job &job) {
 	const bool pbpFolder = T == Format::PBP && s.pbp.layout == PbpLayout::Folder;
 	const bool replacingSource = SamePath(final, in.path);
 	std::error_code ec;
-	if (fs::exists(U8Path(final), ec)) {
-		if (replacingSource && s.out.conflict != Conflict::Overwrite)
-			final = UniquePath(final, pbpFolder);
-		else if (s.out.conflict == Conflict::Skip)
-			return finish(JobState::Skipped, "output exists: " + final);
-		else if (s.out.conflict == Conflict::Rename)
-			final = UniquePath(final, pbpFolder);
+	// Claim the output path, so parallel jobs heading for the same file don't collide.
+	OutputClaim claim;
+	{
+		std::lock_guard<std::mutex> g(ClaimMutex());
+		auto taken = [&](const std::string &p) { return fs::exists(U8Path(p), ec) || Claimed().count(ClaimKey(p)) != 0; };
+		if (taken(final)) {
+			const bool busy = Claimed().count(ClaimKey(final)) != 0;
+			if (replacingSource && s.out.conflict != Conflict::Overwrite)
+				final = UniquePath(final, pbpFolder, taken);
+			else if (s.out.conflict == Conflict::Skip)
+				return finish(JobState::Skipped, "output exists: " + final);
+			else if (s.out.conflict == Conflict::Rename || busy)
+				final = UniquePath(final, pbpFolder, taken);
+		}
+		claim.Take(final);
 	}
 	res.outputPath = final;
 	fs::create_directories(U8Path(final).parent_path(), ec);
