@@ -1,6 +1,7 @@
 #include "core/bench.h"
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <random>
 
@@ -36,6 +37,7 @@ bool MakeCsoCase(const std::string &keyIn, BenchCase *out) {
 	BenchCase c;
 	c.format = Format::CSO;
 	CsoSettings &o = c.cso;
+	o.useDefault = false;
 	o.preset = CsoPreset::Custom;
 	o.zlib = o.zlibBrute = o.sevenZip = o.zopfli = o.libdeflate = false;
 	o.lz4 = o.lz4hc = o.lz4Brute = false;
@@ -56,6 +58,7 @@ bool MakeCsoCase(const std::string &keyIn, BenchCase *out) {
 		o.libdeflate = true;
 	} else if (key == "F" || key == "S" || key == "X") {
 		c.cso = CsoSettings();
+		c.cso.useDefault = false;
 		c.cso.preset = key == "F" ? CsoPreset::Fast : key == "S" ? CsoPreset::Standard : CsoPreset::Max;
 	} else {
 		return false;
@@ -90,6 +93,97 @@ BenchCase MakeMcsoCase(Format f, const CsoSettings &cso) {
 	c.cso = cso;
 	c.label = cso.Describe(f);
 	return c;
+}
+
+BenchCase MakeChdCase(const ChdSettings &chd) {
+	BenchCase c;
+	c.format = Format::CHD;
+	c.chd = chd;
+	c.label = chd.Describe();
+	return c;
+}
+
+BenchCase MakePbpCase(const PbpSettings &pbp) {
+	BenchCase c;
+	c.format = Format::PBP;
+	c.pbp.compress = pbp.compress;
+	c.label = c.pbp.Describe();
+	return c;
+}
+
+std::string SerializeBenchCase(const BenchCase &c) {
+	switch (c.format) {
+	case Format::CHD:
+		return Fmt("f=chd;h=%u;c=%s", c.chd.hunkBytes, c.chd.CodecsString().c_str());
+	case Format::PBP:
+		return Fmt("f=pbp;m=%d", c.pbp.compress);
+	default: {
+		const CsoSettings &o = c.cso;
+		unsigned m = (o.zlib ? 1 : 0) | (o.zlibBrute ? 2 : 0) | (o.sevenZip ? 4 : 0) | (o.zopfli ? 8 : 0) | (o.libdeflate ? 16 : 0) |
+			(o.lz4 ? 32 : 0) | (o.lz4hc ? 64 : 0) | (o.lz4Brute ? 128 : 0);
+		return Fmt("f=%s;d=%d;p=%d;b=%u;m=%u;s=%u;pc=%g;fa=%d", FormatKey(c.format), o.useDefault, (int)o.preset, o.blockSize, m, o.zopfliSplits,
+			o.precheck, o.forceAll);
+	}
+	}
+}
+
+bool ParseBenchCase(const std::string &line, BenchCase *out) {
+	std::map<std::string, std::string> kv;
+	for (const std::string &part : Split(line, ';')) {
+		size_t eq = part.find('=');
+		if (eq != std::string::npos)
+			kv[part.substr(0, eq)] = part.substr(eq + 1);
+	}
+	Format f = FormatFromName(kv["f"]);
+	if (f == Format::Unknown || f == Format::ISO || !FormatAvailable(f))
+		return false;
+	auto num = [&](const char *k, double def) { return kv.count(k) ? strtod(kv[k].c_str(), nullptr) : def; };
+	if (f == Format::CHD) {
+		ChdSettings chd;
+		chd.hunkBytes = (uint32_t)num("h", 0);
+		if (chd.hunkBytes % 2048 || !chd.SetCodecs(kv.count("c") ? kv["c"] : "default"))
+			return false;
+		*out = MakeChdCase(chd);
+		return true;
+	}
+	if (f == Format::PBP) {
+		PbpSettings pbp;
+		pbp.compress = std::clamp((int)num("m", 1), 0, 2);
+		*out = MakePbpCase(pbp);
+		return true;
+	}
+	CsoSettings o;
+	o.useDefault = num("d", 1) != 0;
+	o.preset = (CsoPreset)std::clamp((int)num("p", 1), 0, 3);
+	o.blockSize = (uint32_t)num("b", 0);
+	if (o.blockSize && (o.blockSize < 2048 || o.blockSize > 262144 || (o.blockSize & (o.blockSize - 1))))
+		return false;
+	unsigned m = (unsigned)num("m", 7 | 32 | 64);
+	o.zlib = m & 1;
+	o.zlibBrute = m & 2;
+	o.sevenZip = m & 4;
+	o.zopfli = m & 8;
+	o.libdeflate = m & 16;
+	o.lz4 = m & 32;
+	o.lz4hc = m & 64;
+	o.lz4Brute = m & 128;
+	o.zopfliSplits = (uint32_t)num("s", 0);
+	o.precheck = std::clamp(num("pc", 0), 0.0, 100.0);
+	o.forceAll = num("fa", 0) != 0;
+	*out = MakeMcsoCase(f, o);
+	return true;
+}
+
+std::vector<std::string> DefaultBenchCases() {
+	std::vector<std::string> v;
+#ifdef ISOPK_WITH_CSO
+	BenchCase l;
+	MakeCsoCase("L", &l);  // libdeflate 256K
+	v.push_back(SerializeBenchCase(l));
+#endif
+	v.push_back(SerializeBenchCase(MakeChdCase("default", 0)));
+	v.push_back(SerializeBenchCase(MakePbpCase(1)));
+	return v;
 }
 
 std::string DefaultBenchDir() {

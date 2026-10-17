@@ -31,7 +31,14 @@ const std::vector<CsoBenchSet> &CsoBenchSets();
 bool MakeCsoCase(const std::string &key, BenchCase *out);
 BenchCase MakeChdCase(const std::string &codecs, uint32_t hunk);
 BenchCase MakePbpCase(int compress);
-BenchCase MakeMcsoCase(Format f, const CsoSettings &cso);  // ZSO / CSO2 / DAX / custom CSO
+BenchCase MakeMcsoCase(Format f, const CsoSettings &cso);  // any mCSO format with these settings
+BenchCase MakeChdCase(const ChdSettings &chd);
+BenchCase MakePbpCase(const PbpSettings &pbp);
+
+// One line per case ("f=cso;d=0;p=3;b=262144;m=16;..."), for saving the GUI's benchmark list.
+// The label is rebuilt from the settings when parsing.
+std::string SerializeBenchCase(const BenchCase &c);
+bool ParseBenchCase(const std::string &line, BenchCase *out);
 
 struct BenchConfig {
 	std::vector<BenchCase> cases;

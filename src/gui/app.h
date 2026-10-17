@@ -82,6 +82,9 @@ private:
 	void SettingsChanged();
 	void SaveSettingsNow();
 	void StartBenchmark();
+	void AddToBenchmark(const BenchCase &c);
+	void SaveBenchCases();
+	void DrawAddToBenchmark(const BenchCase &c, const char *id, const std::function<void()> &extra = nullptr);
 	void ApplyUiStyle();
 	std::string OutputFolderLabel() const;
 
@@ -120,12 +123,10 @@ private:
 
 	// Benchmark.
 	std::vector<InputFile> benchInputs_;
-	bool benchCso_[8] = { false, true, false, true, true, false, false, false };  // A B C D L F S X
-	bool benchExtraZso_ = false, benchExtraCso2_ = false, benchExtraDax_ = false;
-	bool benchCodecs_[6] = { true, true, false, true, false, false };  // default lzma zlib zstd flac lzma+zstd
-	std::string benchCustomCodecs_;
-	bool benchHunks_[6] = { true, true, false, true, false, true };  // 2K 4K 8K 16K 32K 64K
-	bool benchPbp_[3] = { true, true, false };                       // lzrc max none
+	std::vector<BenchCase> benchCases_;  // what the benchmark runs; saved in the settings
+	Format benchAddCsoFormat_ = Format::CSO;  // which mCSO format Settings > CSO adds
+	std::string benchNotice_;                // "Added ..." under the Add buttons
+	double benchNoticeAt_ = -10;
 	BenchConfig benchCfg_;
 	std::thread benchThread_;
 	std::atomic<bool> benchRunning_{ false }, benchCancel_{ false };

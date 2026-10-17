@@ -15,8 +15,9 @@ Built on three libraries, linked statically from the submodules in `external/`:
 
 ## What it does
 
-- **Compress** an ISO to CSO / ZSO / CSO v2 / DAX / CHD / PBP, with every option the libraries have:
-  maxcso presets or a custom method set (zlib, brute force, 7-zip, Zopfli, libdeflate, lz4, lz4 HC),
+- **Compress** an ISO to CSO / ZSO / CSO v2 / DAX / CHD / PBP, with every option the libraries have.
+  CSO defaults to libdeflate with 64K blocks (lz4 HC for ZSO); untick Default for maxcso's presets
+  or a custom method set (zlib, brute force, 7-zip, Zopfli, libdeflate, lz4, lz4 HC),
   block size, Zopfli splits and the libdeflate pre-check; CHD codecs (lzma, zlib, zstd, huff, flac)
   and hunk size; PBP compression level, content ID and boot screen.
 - **Extract** any of them back to ISO (PBPs trimmed to their ISO9660 size by default).
@@ -34,8 +35,10 @@ Built on three libraries, linked statically from the submodules in `external/`:
   (CHD and PBP jobs in parallel; maxcso tasks take turns, since its buffer pool is global).
 - **Benchmark**: the successor of `img_bench` — for every image and every setting it compresses
   (timed), records the size, decodes again (timed, compared byte for byte) and times random reads
-  the way an emulator seeks (CSO/ZSO/CHD). Results go to a table, a size-vs-speed chart, and are
-  appended to `summary.txt` and `results.csv`.
+  the way an emulator seeks (CSO/ZSO/CHD). What it runs is a list you build with "Add to
+  benchmark" under each format in Settings, so any combination of options can be compared
+  (it starts with libdeflate 256K CSO, chdman's default CHD and LZRC PBP; each entry has an ×).
+  Results go to a table, a size-vs-speed chart, and are appended to `summary.txt` and `results.csv`.
 
 ## Command line
 

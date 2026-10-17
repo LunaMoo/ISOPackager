@@ -15,6 +15,9 @@ enum class CsoPreset { Fast, Standard, Max, Custom };
 const char *CsoPresetName(CsoPreset p);
 
 struct CsoSettings {
+	// The default: libdeflate only, 64K blocks (lz4 HC for ZSO). When set, everything below is ignored.
+	bool useDefault = true;
+	static constexpr uint32_t DEFAULT_BLOCK = 65536;
 	CsoPreset preset = CsoPreset::Standard;
 	uint32_t blockSize = 0;  // 0 = automatic (2K below 2 GB, 16K above); power of two 2K..256K
 	// Methods, used by the Custom preset. Deflate ones apply to CSO/CSO v2/DAX, lz4 ones to ZSO/CSO v2.
@@ -91,6 +94,9 @@ struct EngineSettings {
 	bool lowPriority = true;    // below-normal process priority while working
 };
 
+// The benchmark list a fresh install starts with: libdeflate 256K CSO, chdman's default CHD, LZRC PBP.
+std::vector<std::string> DefaultBenchCases();
+
 struct Settings {
 	Format target = FormatAvailable(Format::CSO) ? Format::CSO : Format::CHD;
 	CsoSettings cso;
@@ -100,6 +106,7 @@ struct Settings {
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders
 	// GUI only
+	std::vector<std::string> benchCases = DefaultBenchCases();  // serialised BenchCase list (bench.h)
 	int uiTheme = 0;            // 0 dark, 1 light, 2 classic
 	float uiScale = 1.0f;       // on top of the display's DPI scale
 

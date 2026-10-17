@@ -40,6 +40,11 @@ App::App(const PlatformHooks &hooks) : hooks_(hooks) {
 		HumanBytes(RamBudget::Get().Capacity()).c_str(), settingsPath_.c_str()));
 
 	benchCfg_.workDir = DefaultBenchDir();
+	for (const std::string &line : settings_.benchCases) {
+		BenchCase c;
+		if (ParseBenchCase(line, &c))
+			benchCases_.push_back(c);
+	}
 	metaThread_ = std::thread([this] { MetaWorker(); });
 	ApplyUiStyle();
 }

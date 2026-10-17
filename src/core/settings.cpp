@@ -24,6 +24,13 @@ const char *CsoPresetName(CsoPreset p) {
 uint32_t CsoSettings::Flags(Format f) const {
 	uint32_t flags = 0;
 	const bool v2 = f == Format::CSO2, zso = f == Format::ZSO;
+	if (useDefault) {
+		if (zso)
+			flags = NO_ALL & ~(NO_LZ4_DEFAULT | NO_LZ4_HC);  // lz4 has no libdeflate: plain lz4 + lz4 HC
+		else
+			flags = NO_ALL & ~NO_LIBDEFLATE;
+		return flags | (v2 ? FMT_CSO_2 : zso ? FMT_ZSO : f == Format::DAX ? FMT_DAX : 0);
+	}
 	switch (preset) {
 	case CsoPreset::Fast:
 		if (v2)
@@ -83,12 +90,18 @@ uint32_t CsoSettings::Flags(Format f) const {
 }
 
 uint32_t CsoSettings::EffectiveBlockSize(Format f) const {
-	if (f == Format::DAX || blockSize == 0)
+	if (f == Format::DAX)
+		return 0xFFFFFFFFu;
+	if (useDefault)
+		return DEFAULT_BLOCK;
+	if (blockSize == 0)
 		return 0xFFFFFFFFu;  // automatic (DAX has a fixed frame size)
 	return blockSize;
 }
 
 std::string CsoSettings::Describe(Format f) const {
+	if (useDefault)
+		return f == Format::ZSO ? "default (lz4 HC 64K)" : f == Format::DAX ? "default (libdeflate)" : "default (libdeflate 64K)";
 	std::string s = CsoPresetName(preset);
 	if (preset == CsoPreset::Custom) {
 		uint32_t fl = Flags(f);
@@ -235,6 +248,7 @@ bool Settings::Load(const std::string &path) {
 	for (CsoPreset p : { CsoPreset::Fast, CsoPreset::Standard, CsoPreset::Max, CsoPreset::Custom })
 		if (s == CsoPresetName(p))
 			cso.preset = p;
+	boolean("cso.default", cso.useDefault);
 	u32("cso.block", cso.blockSize);
 	boolean("cso.zlib", cso.zlib);
 	boolean("cso.zlib_brute", cso.zlibBrute);
@@ -290,6 +304,8 @@ bool Settings::Load(const std::string &path) {
 	uns("engine.threads", engine.threads);
 	boolean("engine.low_priority", engine.lowPriority);
 	boolean("recursive", recursive);
+	if (kv.count("bench.cases"))  // present even when empty: the user removed them all
+		benchCases = Split(kv["bench.cases"], '|');
 	{
 		uint32_t t = (uint32_t)uiTheme;
 		u32("ui.theme", t);
@@ -309,7 +325,7 @@ bool Settings::Save(const std::string &path) const {
 	std::string t;
 	t += "# ISOPackager settings\n";
 	t += Fmt("target=%s\n", FormatKey(target));
-	t += Fmt("cso.preset=%s\ncso.block=%u\n", CsoPresetName(cso.preset), cso.blockSize);
+	t += Fmt("cso.default=%d\ncso.preset=%s\ncso.block=%u\n", cso.useDefault, CsoPresetName(cso.preset), cso.blockSize);
 	t += Fmt("cso.zlib=%d\ncso.zlib_brute=%d\ncso.7zip=%d\ncso.zopfli=%d\ncso.libdeflate=%d\n", cso.zlib, cso.zlibBrute, cso.sevenZip,
 		cso.zopfli, cso.libdeflate);
 	t += Fmt("cso.lz4=%d\ncso.lz4hc=%d\ncso.lz4_brute=%d\n", cso.lz4, cso.lz4hc, cso.lz4Brute);
@@ -324,6 +340,12 @@ bool Settings::Save(const std::string &path) const {
 	t += Fmt("engine.jobs=%u\nengine.threads=%u\nengine.low_priority=%d\nrecursive=%d\n", engine.jobs, engine.threads, engine.lowPriority,
 		recursive);
 	t += Fmt("ui.theme=%d\nui.scale=%.2f\n", uiTheme, uiScale);
+	{
+		std::string cases;
+		for (const std::string &c : benchCases)
+			cases += (cases.empty() ? "" : "|") + c;
+		t += "bench.cases=" + cases + "\n";
+	}
 	File f;
 	if (!f.Open(path, File::Write))
 		return false;

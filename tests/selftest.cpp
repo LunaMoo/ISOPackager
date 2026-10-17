@@ -106,16 +106,24 @@ int main(int argc, char **argv) {
 		targets.push_back({ f, label, s });
 	};
 #ifdef ISOPK_WITH_CSO
-	add(Format::CSO, "cso standard", [](Settings &) {});
+	add(Format::CSO, "cso default", [](Settings &) {});
+	add(Format::CSO, "cso standard", [](Settings &s) { s.cso.useDefault = false; });
 	add(Format::CSO, "cso custom 256K libdeflate", [](Settings &s) {
+		s.cso.useDefault = false;
 		s.cso.preset = CsoPreset::Custom;
 		s.cso.zlib = s.cso.zlibBrute = s.cso.sevenZip = false;
 		s.cso.libdeflate = true;
 		s.cso.blockSize = 262144;
 	});
 	add(Format::ZSO, "zso", [](Settings &) {});
-	add(Format::CSO2, "cso2 fast", [](Settings &s) { s.cso.preset = CsoPreset::Fast; });
-	add(Format::DAX, "dax fast", [](Settings &s) { s.cso.preset = CsoPreset::Fast; });
+	add(Format::CSO2, "cso2 fast", [](Settings &s) {
+		s.cso.useDefault = false;
+		s.cso.preset = CsoPreset::Fast;
+	});
+	add(Format::DAX, "dax fast", [](Settings &s) {
+		s.cso.useDefault = false;
+		s.cso.preset = CsoPreset::Fast;
+	});
 #endif
 	add(Format::CHD, "chd default", [](Settings &) {});
 	add(Format::CHD, "chd zstd 16K", [](Settings &s) {
@@ -231,6 +239,52 @@ int main(int argc, char **argv) {
 		t.join();
 		CHECK(job.State() == JobState::Cancelled || job.State() == JobState::Done, "cancel: %s", JobStateName(job.State()));
 		CHECK(!fs::exists(root / "cancel" / "Test Game.pbp.part"), "partial output left behind");
+	}
+
+	// Benchmark entries survive a save / load (the GUI's list lives in the settings file).
+	{
+		std::vector<BenchCase> cases;
+		BenchCase c;
+#ifdef ISOPK_WITH_CSO
+		MakeCsoCase("D", &c);
+		cases.push_back(c);
+		CsoSettings z;
+		z.useDefault = false;
+		z.preset = CsoPreset::Custom;
+		z.lz4Brute = true;
+		z.blockSize = 16384;
+		cases.push_back(MakeMcsoCase(Format::ZSO, z));
+		cases.push_back(MakeMcsoCase(Format::CSO, CsoSettings()));
+#endif
+		cases.push_back(MakeChdCase("lzma+zstd", 8192));
+		cases.push_back(MakePbpCase(2));
+		Settings s;
+		s.benchCases.clear();
+		for (auto &bc : cases)
+			s.benchCases.push_back(SerializeBenchCase(bc));
+		std::string ini = PathU8(root / "bench_cases.ini");
+		CHECK(s.Save(ini), "saving bench cases");
+		Settings back;
+		back.benchCases.clear();
+		CHECK(back.Load(ini) && back.benchCases.size() == cases.size(), "loaded %zu bench cases", back.benchCases.size());
+		for (size_t i = 0; i < cases.size() && i < back.benchCases.size(); ++i) {
+			BenchCase p;
+			CHECK(ParseBenchCase(back.benchCases[i], &p), "parse %s", back.benchCases[i].c_str());
+			CHECK(p.format == cases[i].format && SerializeBenchCase(p) == SerializeBenchCase(cases[i]) &&
+					  p.cso.Flags(p.format) == cases[i].cso.Flags(cases[i].format) && p.cso.EffectiveBlockSize(p.format) == cases[i].cso.EffectiveBlockSize(cases[i].format),
+				"bench case %zu changed: %s", i, back.benchCases[i].c_str());
+		}
+		// Removing them all must stick (not come back as the defaults).
+		s.benchCases.clear();
+		CHECK(s.Save(ini), "saving empty list");
+		Settings empty;
+		CHECK(empty.Load(ini) && empty.benchCases.empty(), "empty bench list came back with %zu", empty.benchCases.size());
+#ifdef ISOPK_WITH_CSO
+		CsoSettings def;
+		CHECK(def.useDefault && def.EffectiveBlockSize(Format::CSO) == 65536 && (def.Flags(Format::CSO) & mcso_flags::NO_LIBDEFLATE) == 0 &&
+				  (def.Flags(Format::CSO) & mcso_flags::NO_ZLIB) == mcso_flags::NO_ZLIB,
+			"CSO default isn't libdeflate 64K");
+#endif
 	}
 
 	// A tiny benchmark.

@@ -71,7 +71,7 @@ void Usage() {
 		"      --save-config FILE Save the resulting settings and exit\n"
 		"  -q, --quiet            Only errors and the final summary\n\n"
 		"CSO / ZSO / CSO v2 / DAX (mCSO):\n"
-		"      --preset P         fast, standard (default), max\n"
+		"      --preset P         default (libdeflate, 64K blocks), fast, standard, max\n"
 		"      --methods LIST     Custom method set: zlib,zlib-brute,7z,zopfli,libdeflate,lz4,lz4hc,lz4hc-brute\n"
 		"      --block SIZE       Block size, power of two 2K..256K (default auto)\n"
 		"      --splits N         Zopfli block splits (default 15)\n"
@@ -222,8 +222,10 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 			if (!val(v))
 				return false;
 			v = ToLower(v);
-			if (v == "fast") a.s.cso.preset = CsoPreset::Fast;
-			else if (v == "standard" || v == "default") a.s.cso.preset = CsoPreset::Standard;
+			a.s.cso.useDefault = v == "default";
+			if (v == "default") {
+			} else if (v == "fast") a.s.cso.preset = CsoPreset::Fast;
+			else if (v == "standard") a.s.cso.preset = CsoPreset::Standard;
 			else if (v == "max" || v == "maximum") a.s.cso.preset = CsoPreset::Max;
 			else if (v == "custom") a.s.cso.preset = CsoPreset::Custom;
 			else {
@@ -234,6 +236,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 			if (!val(v))
 				return false;
 			CsoSettings &c = a.s.cso;
+			c.useDefault = false;
 			c.preset = CsoPreset::Custom;
 			c.zlib = c.zlibBrute = c.sevenZip = c.zopfli = c.libdeflate = c.lz4 = c.lz4hc = c.lz4Brute = false;
 			for (const std::string &m : Split(ToLower(v), ',')) {
@@ -339,6 +342,16 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		}
 	}
 	(void)methodsGiven;
+	// Tuning options on top of the default: the same method set (libdeflate), made explicit.
+	CsoSettings &c = a.s.cso;
+	if (c.useDefault && (c.blockSize || c.zopfliSplits || c.precheck > 0 || c.forceAll)) {
+		c.useDefault = false;
+		c.preset = CsoPreset::Custom;
+		c.zlib = c.zlibBrute = c.sevenZip = c.zopfli = c.lz4Brute = false;
+		c.libdeflate = c.lz4 = c.lz4hc = true;
+		if (!c.blockSize)
+			c.blockSize = CsoSettings::DEFAULT_BLOCK;
+	}
 	if (a.command == "extract" && a.explicitTarget && a.s.target != Format::ISO) {
 		err = "extract always writes ISO; use convert --to";
 		return false;

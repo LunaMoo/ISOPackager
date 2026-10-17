@@ -114,51 +114,70 @@ void App::DrawSettings() {
 	if (ImGui::CollapsingHeader("CSO / ZSO / CSO v2 / DAX (maxcso)", ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Indent();
 		CsoSettings &c = settings_.cso;
-		row("Preset");
-		int p = (int)c.preset;
-		if (ImGui::Combo("##preset", &p, "Fast (zlib only)\0Standard (zlib + brute force + 7-zip)\0Maximum (+ Zopfli + libdeflate, slow)\0Custom\0")) {
-			c.preset = (CsoPreset)p;
-			changed = true;
+		changed |= ImGui::Checkbox("Default (libdeflate, 64K blocks)", &c.useDefault);
+		Tip("Fast to compress and quick to read in PPSSPP. ZSO uses lz4 HC instead (lz4 has no libdeflate). "
+			"Some old PSP custom firmware can't read libdeflate's CSO output; untick to choose methods yourself.");
+		if (!c.useDefault) {
+			row("Preset");
+			int p = (int)c.preset;
+			if (ImGui::Combo("##preset", &p, "Fast (zlib only)\0Standard (zlib + brute force + 7-zip)\0Maximum (+ Zopfli + libdeflate, slow)\0Custom\0")) {
+				c.preset = (CsoPreset)p;
+				changed = true;
+			}
+			row("Block size");
+			changed |= BlockSizeCombo("##block", &c.blockSize, 2048, 262144, true, "Automatic (2K, 16K above 2 GB)");
+			HelpMarker("Bigger blocks compress better but every read decompresses a whole block. PPSSPP handles any size; real PSPs need 2K.");
+			if (c.preset == CsoPreset::Custom) {
+				ImGui::TextDisabled("Deflate methods (CSO, CSO v2, DAX): every enabled method is tried on each block, the smallest wins");
+				changed |= ImGui::Checkbox("zlib", &c.zlib);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("zlib brute force", &c.zlibBrute);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("7-zip deflate", &c.sevenZip);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("Zopfli", &c.zopfli);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("libdeflate", &c.libdeflate);
+				Tip("Some old PSP custom firmware can't read libdeflate's output in CSO v1.");
+				ImGui::TextDisabled("lz4 methods (ZSO, CSO v2)");
+				changed |= ImGui::Checkbox("lz4", &c.lz4);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("lz4 HC", &c.lz4hc);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("lz4 HC brute force", &c.lz4Brute);
+			}
+			row("Zopfli splits");
+			int sp = (int)c.zopfliSplits;
+			if (ImGui::SliderInt("##splits", &sp, 0, 60, sp == 0 ? "default (15)" : "%d")) {
+				c.zopfliSplits = (uint32_t)sp;
+				changed = true;
+			}
+			HelpMarker("Deflate blocks Zopfli may split each CSO block into. Larger CSO blocks gain from more splits (img_bench set B uses 20).");
+			row("libdeflate pre-check");
+			float pc = (float)c.precheck;
+			if (ImGui::SliderFloat("##precheck", &pc, 0, 100, pc <= 0 ? "off" : "%.0f%%")) {
+				c.precheck = pc < 1 ? 0 : pc;
+				changed = true;
+			}
+			HelpMarker("Skip Zopfli and 7-zip on blocks libdeflate can't get below this share of the block (video, audio): much faster Maximum "
+					   "compression for nearly the same size (img_bench sets C and D use 98%).");
+			changed |= ImGui::Checkbox("Compress every block, even when it doesn't save space", &c.forceAll);
 		}
-		row("Block size");
-		changed |= BlockSizeCombo("##block", &c.blockSize, 2048, 262144, true, "Automatic (2K, 16K above 2 GB)");
-		HelpMarker("Bigger blocks compress better but every read decompresses a whole block. PPSSPP handles any size; real PSPs need 2K.");
-		if (c.preset == CsoPreset::Custom) {
-			ImGui::TextDisabled("Deflate methods (CSO, CSO v2, DAX): every enabled method is tried on each block, the smallest wins");
-			changed |= ImGui::Checkbox("zlib", &c.zlib);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("zlib brute force", &c.zlibBrute);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("7-zip deflate", &c.sevenZip);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("Zopfli", &c.zopfli);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("libdeflate", &c.libdeflate);
-			Tip("Some old PSP custom firmware can't read libdeflate's output in CSO v1.");
-			ImGui::TextDisabled("lz4 methods (ZSO, CSO v2)");
-			changed |= ImGui::Checkbox("lz4", &c.lz4);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("lz4 HC", &c.lz4hc);
-			ImGui::SameLine();
-			changed |= ImGui::Checkbox("lz4 HC brute force", &c.lz4Brute);
-		}
-		row("Zopfli splits");
-		int sp = (int)c.zopfliSplits;
-		if (ImGui::SliderInt("##splits", &sp, 0, 60, sp == 0 ? "default (15)" : "%d")) {
-			c.zopfliSplits = (uint32_t)sp;
-			changed = true;
-		}
-		HelpMarker("Deflate blocks Zopfli may split each CSO block into. Larger CSO blocks gain from more splits (img_bench set B uses 20).");
-		row("libdeflate pre-check");
-		float pc = (float)c.precheck;
-		if (ImGui::SliderFloat("##precheck", &pc, 0, 100, pc <= 0 ? "off" : "%.0f%%")) {
-			c.precheck = pc < 1 ? 0 : pc;
-			changed = true;
-		}
-		HelpMarker("Skip Zopfli and 7-zip on blocks libdeflate can't get below this share of the block (video, audio): much faster Maximum "
-				   "compression for nearly the same size (img_bench sets C and D use 98%).");
-		changed |= ImGui::Checkbox("Compress every block, even when it doesn't save space", &c.forceAll);
 		ImGui::TextDisabled("CSO: %s   ZSO: %s", c.Describe(Format::CSO).c_str(), c.Describe(Format::ZSO).c_str());
+		DrawAddToBenchmark(MakeMcsoCase(benchAddCsoFormat_, c), "cso", [&] {
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("as");
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(em * 6.5f);
+			if (ImGui::BeginCombo("##benchfmt", FormatName(benchAddCsoFormat_))) {
+				for (Format f : { Format::CSO, Format::ZSO, Format::CSO2, Format::DAX })
+					if (ImGui::Selectable(FormatName(f), f == benchAddCsoFormat_))
+						benchAddCsoFormat_ = f;
+				ImGui::EndCombo();
+			}
+			Tip("Which format the benchmark should compress with these settings.");
+		});
 		ImGui::Unindent();
 	}
 #endif
@@ -209,6 +228,7 @@ void App::DrawSettings() {
 			ImGui::SetCursorPosX(codecX);
 			ImGui::TextDisabled("Each hunk uses whichever codec makes it smallest. zstd decodes fastest; lzma is smallest. Up to 4.");
 		}
+		DrawAddToBenchmark(MakeChdCase(c), "chd");
 		ImGui::Unindent();
 	}
 
@@ -252,6 +272,7 @@ void App::DrawSettings() {
 		changed |= ImGui::Checkbox("Trim extracted ISOs to their ISO9660 size", &c.trimOnExtract);
 		Tip("A PBP stores whole 16-sector blocks; trimming gives back the exact dump size.");
 		changed |= ImGui::Checkbox("Check block MACs when reading PBPs", &c.verifyMacs);
+		DrawAddToBenchmark(MakePbpCase(c), "pbp");
 		ImGui::Unindent();
 	}
 
@@ -277,6 +298,7 @@ void App::DrawSettings() {
 		Settings d;
 		d.uiTheme = settings_.uiTheme;
 		d.uiScale = settings_.uiScale;
+		d.benchCases = settings_.benchCases;
 		settings_ = d;
 		addTarget_ = settings_.target;
 		changed = true;
@@ -289,47 +311,50 @@ void App::DrawSettings() {
 
 // ---- Benchmark --------------------------------------------------------------------------------
 
+void App::SaveBenchCases() {
+	settings_.benchCases.clear();
+	for (const BenchCase &c : benchCases_)
+		settings_.benchCases.push_back(SerializeBenchCase(c));
+	SettingsChanged();
+}
+
+void App::AddToBenchmark(const BenchCase &c) {
+	const std::string key = SerializeBenchCase(c);
+	for (const BenchCase &b : benchCases_)
+		if (SerializeBenchCase(b) == key) {
+			benchNotice_ = std::string("Already in the benchmark: ") + FormatName(c.format) + " " + c.label;
+			benchNoticeAt_ = ImGui::GetTime();
+			return;
+		}
+	benchCases_.push_back(c);
+	SaveBenchCases();
+	benchNotice_ = std::string("Added to the benchmark: ") + FormatName(c.format) + " " + c.label;
+	benchNoticeAt_ = ImGui::GetTime();
+}
+
+void App::DrawAddToBenchmark(const BenchCase &c, const char *id, const std::function<void()> &extra) {
+	ImGui::PushID(id);
+	ImGui::BeginDisabled(benchRunning_);
+	if (ImGui::Button("Add to benchmark"))
+		AddToBenchmark(c);
+	ImGui::EndDisabled();
+	ImGui::SetItemTooltip("Adds \"%s %s\" to the Benchmark tab's list.", FormatName(c.format), c.label.c_str());
+	if (extra)
+		extra();
+	if (!benchNotice_.empty() && ImGui::GetTime() - benchNoticeAt_ < 3.0 &&
+		benchNotice_.find(std::string(FormatName(c.format)) + " " + c.label) != std::string::npos) {
+		ImGui::SameLine();
+		ImGui::TextColored(kOk, "%s", benchNotice_.c_str());
+	}
+	ImGui::PopID();
+}
+
 void App::StartBenchmark() {
 	if (benchRunning_)
 		return;
 	BenchConfig cfg = benchCfg_;
-	cfg.cases.clear();
+	cfg.cases = benchCases_;
 	cfg.threads = settings_.engine.threads;
-#ifdef ISOPK_WITH_CSO
-	const char *keys[8] = { "A", "B", "C", "D", "L", "F", "S", "X" };
-	for (int i = 0; i < 8; ++i) {
-		BenchCase c;
-		if (benchCso_[i] && MakeCsoCase(keys[i], &c))
-			cfg.cases.push_back(c);
-	}
-	if (benchExtraZso_)
-		cfg.cases.push_back(MakeMcsoCase(Format::ZSO, settings_.cso));
-	if (benchExtraCso2_)
-		cfg.cases.push_back(MakeMcsoCase(Format::CSO2, settings_.cso));
-	if (benchExtraDax_)
-		cfg.cases.push_back(MakeMcsoCase(Format::DAX, settings_.cso));
-#endif
-	std::vector<std::string> codecSets;
-	const char *codecNames[6] = { "default", "lzma", "zlib", "zstd", "flac", "lzma+zstd" };
-	for (int i = 0; i < 6; ++i)
-		if (benchCodecs_[i])
-			codecSets.push_back(codecNames[i]);
-	for (const std::string &s : Split(benchCustomCodecs_, ',')) {
-		ChdSettings probe;
-		if (probe.SetCodecs(s))
-			codecSets.push_back(s);
-		else
-			Log(LogLevel::Warning, "Ignoring unknown CHD codec set: " + s);
-	}
-	const uint32_t hunks[6] = { 2048, 4096, 8192, 16384, 32768, 65536 };
-	for (const std::string &cs : codecSets)
-		for (int h = 0; h < 6; ++h)
-			if (benchHunks_[h])
-				cfg.cases.push_back(MakeChdCase(cs, hunks[h]));
-	const int modes[3] = { 1, 2, 0 };
-	for (int i = 0; i < 3; ++i)
-		if (benchPbp_[i])
-			cfg.cases.push_back(MakePbpCase(modes[i]));
 	if (cfg.cases.empty() || benchInputs_.empty()) {
 		Log(LogLevel::Warning, "Benchmark: pick at least one image and one setting.");
 		return;
@@ -407,43 +432,71 @@ void App::DrawBenchmark() {
 			benchInputs_.erase(benchInputs_.begin() + remove);
 	}
 
+	ImGui::SeparatorText("Methods");
+	{
+		int remove = -1;
+		const float rowH = ImGui::GetFrameHeight();
+		if (ImGui::BeginChild("##benchcases", ImVec2(0, std::min(em * 14, std::max<float>(rowH * 2, (rowH + 4) * (float)benchCases_.size() + 8))),
+				ImGuiChildFlags_Borders)) {
+			for (int i = 0; i < (int)benchCases_.size(); ++i) {
+				const BenchCase &c = benchCases_[i];
+				ImGui::PushID(i);
+				ImGui::BeginDisabled(running);
+				if (ImGui::SmallButton("x"))
+					remove = i;
+				ImGui::EndDisabled();
+				ImGui::SetItemTooltip("Remove from the benchmark");
+				ImGui::SameLine();
+				ImGui::TextColored(FormatColor(c.format), "%s", FormatName(c.format));
+				ImGui::SameLine(em * 5.5f);
+				ImGui::TextUnformatted(c.label.c_str());
+				ImGui::PopID();
+			}
+			if (benchCases_.empty())
+				ImGui::TextDisabled("Nothing to run yet.");
+		}
+		ImGui::EndChild();
+		if (remove >= 0) {
+			benchCases_.erase(benchCases_.begin() + remove);
+			SaveBenchCases();
+		}
+	}
+	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+	ImGui::TextWrapped("Add methods with \"Add to benchmark\" under each format in Settings.");
+	ImGui::PopStyleColor();
+	if (ImGui::SmallButton("Open Settings"))
+		requestTab_ = 1;
+	ImGui::SameLine();
 	ImGui::BeginDisabled(running);
 #ifdef ISOPK_WITH_CSO
-	ImGui::SeparatorText("CSO (maxcso)");
-	const auto &sets = CsoBenchSets();
-	for (int i = 0; i < 8 && i < (int)sets.size(); ++i) {
-		std::string l = std::string(sets[i].key) + ": " + sets[i].name;
-		ImGui::Checkbox(l.c_str(), &benchCso_[i]);
+	if (ImGui::SmallButton("img_bench CSO sets..."))
+		ImGui::OpenPopup("##imgbench");
+	if (ImGui::BeginPopup("##imgbench")) {
+		for (const auto &set : CsoBenchSets()) {
+			std::string l = std::string(set.key) + ": " + set.name;
+			if (ImGui::Selectable(l.c_str())) {
+				BenchCase c;
+				if (MakeCsoCase(set.key, &c))
+					AddToBenchmark(MakeMcsoCase(Format::CSO, c.cso));
+			}
+		}
+		ImGui::EndPopup();
 	}
-	ImGui::Checkbox("ZSO", &benchExtraZso_);
 	ImGui::SameLine();
-	ImGui::Checkbox("CSO v2", &benchExtraCso2_);
-	ImGui::SameLine();
-	ImGui::Checkbox("DAX", &benchExtraDax_);
-	Tip("These use the CSO settings from the Settings tab.");
 #endif
-	ImGui::SeparatorText("CHD (codecs x hunk sizes)");
-	const char *codecNames[6] = { "default", "lzma", "zlib", "zstd", "flac", "lzma+zstd" };
-	for (int i = 0; i < 6; ++i) {
-		ImGui::Checkbox(codecNames[i], &benchCodecs_[i]);
-		if (i % 3 != 2)
-			ImGui::SameLine();
+	if (ImGui::SmallButton("Defaults")) {
+		benchCases_.clear();
+		for (const std::string &line : DefaultBenchCases()) {
+			BenchCase c;
+			if (ParseBenchCase(line, &c))
+				benchCases_.push_back(c);
+		}
+		SaveBenchCases();
 	}
-	ImGui::SetNextItemWidth(-FLT_MIN);
-	InputStringHint("##customcodecs", "more sets, e.g. zstd+zlib,huff", &benchCustomCodecs_);
-	const char *hunkNames[6] = { "2K", "4K", "8K", "16K", "32K", "64K" };
-	for (int i = 0; i < 6; ++i) {
-		ImGui::Checkbox(hunkNames[i], &benchHunks_[i]);
-		if (i != 5)
-			ImGui::SameLine();
-	}
-	ImGui::SeparatorText("PBP (iPBP)");
-	ImGui::Checkbox("LZRC", &benchPbp_[0]);
-	ImGui::SameLine();
-	ImGui::Checkbox("LZRC max", &benchPbp_[1]);
-	ImGui::SameLine();
-	ImGui::Checkbox("none", &benchPbp_[2]);
+	ImGui::SetItemTooltip("libdeflate 256K CSO, chdman's default CHD and LZRC PBP");
+	ImGui::EndDisabled();
 
+	ImGui::BeginDisabled(running);
 	ImGui::SeparatorText("Options");
 	ImGui::Checkbox("Verify (compare decoded images)", &benchCfg_.verify);
 	ImGui::Checkbox("Compress from RAM", &benchCfg_.sourceInRam);
