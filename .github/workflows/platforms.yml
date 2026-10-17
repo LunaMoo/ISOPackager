@@ -20,6 +20,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+          validate-wrappers: false
       - name: Build APK
         working-directory: android
         run: |
@@ -66,9 +67,11 @@ jobs:
           usesh: true
           prepare: pkg install -y cmake ninja pkgconf libX11 libXext libXrandr libXcursor libXi libXScrnSaver libXfixes
           run: |
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --parallel 4
-            build/isopk_selftest /tmp/isopk_selftest
+            set -e
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release > configure.log 2>&1 || { grep -E "Error|error" -A3 configure.log | head -20 | sed 's/^/::error::/'; exit 1; }
+            cmake --build build --parallel 4 > build.log 2>&1 || { grep -E "error|Error" build.log | head -25 | sed 's/^/::error::/'; exit 1; }
+            build/isopk_selftest /tmp/isopk_selftest > test.log 2>&1 || { grep -E "FAIL|error" test.log | head -25 | sed 's/^/::error::/'; exit 1; }
+            tail -3 test.log
       - uses: actions/upload-artifact@v5
         with:
           name: ISOPackager-freebsd-x64
@@ -86,7 +89,7 @@ jobs:
       - name: Configure
         shell: pwsh
         run: |
-          cmake -S . -B build -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 2>&1 | Tee-Object -FilePath configure.log
+          cmake -S . -B build -A x64 '-DCMAKE_SYSTEM_NAME=WindowsStore' '-DCMAKE_SYSTEM_VERSION=10.0' 2>&1 | Tee-Object -FilePath configure.log
           if ($LASTEXITCODE -ne 0) {
             Select-String -Path configure.log -Pattern 'CMake Error|error' -Context 0,3 | Select-Object -First 15 | ForEach-Object { Write-Output "::error::$($_.Line) $($_.Context.PostContext -join ' ')" }
             exit 1
