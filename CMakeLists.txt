@@ -187,6 +187,7 @@ if(ISOPK_BUILD_GUI)
 
 	set(GUI_SOURCES
 		src/gui/app.cpp
+		src/gui/app_panels.cpp
 		src/gui/file_browser.cpp
 		src/gui/widgets.cpp)
 

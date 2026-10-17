@@ -2,6 +2,7 @@
 // portal, FreeBSD, Android, iOS, UWP) or when the user prefers it.
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
