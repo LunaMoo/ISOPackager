@@ -99,7 +99,9 @@ jobs:
         run: |
           cmake --build build --config Release --target isopackager --parallel -- /nologo /v:minimal /p:AppxPackageSigningEnabled=false 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) {
-            Select-String -Path build.log -Pattern ': (fatal )?error ' | Select-Object -First 25 | ForEach-Object { Write-Output "::error::$($_.Line)" }
+            $errs = Select-String -Path build.log -Pattern 'error|unresolved' | Select-Object -First 25
+            if (-not $errs) { $errs = Get-Content build.log -Tail 30 | ForEach-Object { [pscustomobject]@{ Line = $_ } } }
+            $errs | ForEach-Object { Write-Output "::error::$($_.Line)" }
             exit 1
           }
       - uses: actions/upload-artifact@v5
