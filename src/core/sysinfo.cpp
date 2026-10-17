@@ -8,6 +8,7 @@
 #include <string>
 #include <thread>
 
+#include "core/fileio.h"
 #include "core/util.h"
 
 #if defined(_WIN32)
@@ -127,12 +128,65 @@ void SetAppDataDir(const std::string &dir) {
 	g_appDataDir = dir;
 }
 
+std::string ExecutableDir() {
+#if defined(_WIN32) && (!defined(WINAPI_FAMILY) || WINAPI_FAMILY != WINAPI_FAMILY_APP)
+	std::wstring buf(32768, L'\0');
+	DWORD n = GetModuleFileNameW(nullptr, buf.data(), (DWORD)buf.size());
+	if (n == 0 || n >= buf.size())
+		return {};
+	buf.resize(n);
+	return PathU8(fs::path(buf).parent_path());
+#elif defined(__linux__) && !defined(__ANDROID__)
+	std::error_code ec;
+	fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+	return ec ? std::string() : PathU8(exe.parent_path());
+#else
+	return {};
+#endif
+}
+
+// portable.ini next to the executable: empty -> keep everything in that folder; otherwise the
+// first line is the folder to use (relative paths are relative to the executable's folder).
+static std::string PortableDir() {
+	std::string exeDir = ExecutableDir();
+	if (exeDir.empty())
+		return {};
+	fs::path ini = U8Path(exeDir) / "portable.ini";
+	std::error_code ec;
+	if (!fs::is_regular_file(ini, ec))
+		return {};
+	std::string line;
+	File f;
+	if (f.Open(PathU8(ini), File::Read)) {
+		char buf[4096] = {};
+		int64_t n = f.ReadAt(0, buf, sizeof(buf) - 1);
+		std::string text(buf, n > 0 ? (size_t)n : 0);
+		if (text.size() >= 3 && (uint8_t)text[0] == 0xEF && (uint8_t)text[1] == 0xBB && (uint8_t)text[2] == 0xBF)
+			text.erase(0, 3);  // UTF-8 BOM (Notepad)
+		line = Trim(text.substr(0, text.find_first_of("\r\n")));
+		if (line.size() >= 2 && line.front() == '"' && line.back() == '"')
+			line = line.substr(1, line.size() - 2);
+	}
+	if (line.empty())
+		return exeDir;
+	fs::path dir = U8Path(line);
+	if (dir.is_relative())
+		dir = U8Path(exeDir) / dir;
+	fs::create_directories(dir, ec);
+	if (!fs::is_directory(dir, ec))
+		return exeDir;  // not a usable path: stay next to the executable
+	return PathU8(dir.lexically_normal());
+}
+
 std::string AppDataDir() {
 	{
 		std::lock_guard<std::mutex> g(g_dirMutex);
 		if (!g_appDataDir.empty())
 			return g_appDataDir;
 	}
+	static const std::string portable = PortableDir();
+	if (!portable.empty())
+		return portable;
 	fs::path base;
 #if defined(_WIN32) && (!defined(WINAPI_FAMILY) || WINAPI_FAMILY != WINAPI_FAMILY_APP)
 	PWSTR p = nullptr;

@@ -18,7 +18,10 @@ void SetLowPriority(bool low);
 
 // Folder for settings and benchmark results. Frontends that know better (SDL_GetPrefPath on
 // mobile) call SetAppDataDir first.
+// portable.ini next to the executable (Windows, Linux) switches to portable mode: an empty file
+// keeps everything in the executable's folder, otherwise its first line names the folder.
 std::string AppDataDir();
+std::string ExecutableDir();  // empty where unknown
 void SetAppDataDir(const std::string &utf8Path);
 
 // The number of worker threads mCSO's pool (libuv) gets. Only takes effect before the first

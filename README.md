@@ -118,7 +118,11 @@ is byte-identical to the libuv build's.
 
 ## Settings and results
 
-Settings are saved to `%APPDATA%\ISOPackager\isopackager.ini` (Windows),
+**Portable mode** (Windows, Linux): put a `portable.ini` next to the executable. Empty, it keeps
+the settings and benchmark results (in `bench/`) in the executable's folder; with a path on its
+first line (absolute, or relative to the executable), they go there instead.
+
+Otherwise, settings are saved to `%APPDATA%\ISOPackager\isopackager.ini` (Windows),
 `~/Library/Application Support/ISOPackager` (macOS), `~/.config/isopackager` (Linux, FreeBSD) or
 the app's private folder (Android, iOS). Benchmark results go to the `bench` folder next to it,
 unless another folder is chosen.
