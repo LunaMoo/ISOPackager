@@ -258,7 +258,7 @@ if(ISOPK_BUILD_GUI)
 		elseif(ISOPK_UWP)
 			# SDL's WinRT entry point is C++/CX: compile it into the app with /ZW.
 			set(WINRT_MAIN ${EXT}/SDL/src/main/winrt/SDL_winrt_main_NonXAML.cpp)
-			set_source_files_properties(${WINRT_MAIN} PROPERTIES COMPILE_FLAGS "/ZW")
+			set_source_files_properties(${WINRT_MAIN} PROPERTIES COMPILE_FLAGS "/ZW /std:c++17 /EHsc")
 			add_executable(isopackager WIN32 ${GUI_SOURCES} src/gui/main_sdl.cpp ${WINRT_MAIN})
 			set_target_properties(isopackager PROPERTIES VS_WINRT_COMPONENT TRUE OUTPUT_NAME ISOPackager)
 		else()
