@@ -68,7 +68,7 @@ the fast / standard / max presets.
 | FreeBSD | SDL2 | |
 | Android | SDL2 | asks for "all files access" to reach images on shared storage |
 | iOS | SDL2 | works on the app's Documents folder (Files app sharing enabled) |
-| UWP | SDL2 | sandboxed file access; CSO formats depend on libuv building for UWP |
+| UWP | SDL2 | CHD, PBP and ISO only (maxcso's libuv and 7-zip code need desktop Win32 APIs); sandboxed file access |
 
 Every build has the same engine; the CLI is built on desktop platforms.
 
