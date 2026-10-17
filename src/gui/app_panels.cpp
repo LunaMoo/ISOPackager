@@ -276,6 +276,76 @@ void App::DrawSettings() {
 		ImGui::Unindent();
 	}
 
+	// --- RVZ / WIA
+	if (ImGui::CollapsingHeader("RVZ / WIA (iRVZ, GameCube and Wii)", ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Indent();
+		RvzSettings &c = settings_.rvz;
+		changed |= ImGui::Checkbox("Default (LZMA2 level 5; chunks: RVZ 128K, WIA 2M)", &c.useDefault);
+		Tip("Small files that Dolphin reads quickly. Untick to choose the method, level and chunk size yourself.");
+		if (!c.useDefault) {
+			row("Method");
+			if (ImGui::BeginCombo("##rvzmethod", RvzMethodName(c.method))) {
+				const char *notes[] = { "store the data as it is", "WIA only: drops runs of zeros", "", "", "Dolphin's LZMA2", "RVZ only: fastest to read" };
+				for (int m = RVZ_NONE; m <= RVZ_ZSTD; ++m) {
+					std::string l = std::string(RvzMethodName(m)) + (notes[m][0] ? std::string("  (") + notes[m] + ")" : std::string());
+					if (ImGui::Selectable(l.c_str(), c.method == m)) {
+						c.method = m;
+						int lo, hi;
+						RvzMethodLevels(m, &lo, &hi);
+						if (lo <= hi)
+							c.level = std::clamp(c.level, lo, hi);
+						changed = true;
+					}
+				}
+				ImGui::EndCombo();
+			}
+			int lo, hi;
+			RvzMethodLevels(c.method, &lo, &hi);
+			if (lo <= hi) {
+				row("Level");
+				if (ImGui::SliderInt("##rvzlevel", &c.level, lo, hi))
+					changed = true;
+				HelpMarker("Higher compresses smaller and slower. zstd's negative levels trade size for speed.");
+			}
+			row("Chunk size");
+			{
+				auto label = [](uint32_t v) {
+					return v == 0 ? std::string("Format default (RVZ 128K, WIA 2M)") : v >= (1u << 20) ? Fmt("%uM", v >> 20) : Fmt("%uK", v >> 10);
+				};
+				if (ImGui::BeginCombo("##rvzchunk", label(c.chunk).c_str())) {
+					const uint32_t sizes[] = { 0, 32u << 10, 64u << 10, 128u << 10, 256u << 10, 512u << 10, 1u << 20, 2u << 20, 4u << 20, 8u << 20,
+						16u << 20, 32u << 20 };
+					for (uint32_t v : sizes) {
+						std::string l = label(v) + (v && v < (2u << 20) ? "  (RVZ only)" : "");
+						if (ImGui::Selectable(l.c_str(), c.chunk == v)) {
+							c.chunk = v;
+							changed = true;
+						}
+					}
+					ImGui::EndCombo();
+				}
+				HelpMarker("Bigger chunks compress better; every read decompresses a whole chunk. WIA takes multiples of 2M only.");
+			}
+			if (!RvzMethodAllowed(Format::RVZ, c.method) || !RvzMethodAllowed(Format::WIA, c.method) || (c.chunk && c.chunk < (2u << 20)))
+				ImGui::TextColored(kWarn, "Settings a format can't take are adjusted for it, see below.");
+		}
+		ImGui::TextDisabled("RVZ: %s   WIA: %s", c.Describe(Format::RVZ).c_str(), c.Describe(Format::WIA).c_str());
+		DrawAddToBenchmark(MakeRvzCase(benchAddRvzFormat_, c), "rvz", [&] {
+			ImGui::SameLine();
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextUnformatted("as");
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(em * 6.5f);
+			if (ImGui::BeginCombo("##benchrvzfmt", FormatName(benchAddRvzFormat_))) {
+				for (Format f : { Format::RVZ, Format::WIA })
+					if (ImGui::Selectable(FormatName(f), f == benchAddRvzFormat_))
+						benchAddRvzFormat_ = f;
+				ImGui::EndCombo();
+			}
+		});
+		ImGui::Unindent();
+	}
+
 	// --- Appearance
 	if (ImGui::CollapsingHeader("Appearance")) {
 		ImGui::Indent();

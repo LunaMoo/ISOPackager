@@ -261,7 +261,8 @@ ImageInfo InspectImage(const std::string &path) {
 			info.platform = ri.disc_type == 1 ? Platform::GameCube : ri.disc_type == 2 ? Platform::Wii : Platform::Unknown;
 			std::string level = ri.compression == IRVZ_COMPRESSION_NONE || ri.compression == IRVZ_COMPRESSION_PURGE
 				? std::string() : Fmt(" level %d", ri.compression_level);
-			info.detail = Fmt("%s%s, chunk %uK", irvz_compression_name(ri.compression), level.c_str(), ri.chunk_size / 1024);
+			std::string chunk = ri.chunk_size >= (1u << 20) ? Fmt("%uM", ri.chunk_size >> 20) : Fmt("%uK", ri.chunk_size >> 10);
+			info.detail = Fmt("%s%s, chunk %s", irvz_compression_name(ri.compression), level.c_str(), chunk.c_str());
 			irvz_close(f);
 		} else {
 			info.error = std::string("iRVZ: ") + irvz_last_error();

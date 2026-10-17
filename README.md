@@ -5,13 +5,14 @@ Dear ImGui interface and a command line tool that share the same engine.
 
 | In                                   | Out                                      |
 |--------------------------------------|------------------------------------------|
-| ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP | any of them                        |
+| ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP, WIA, RVZ | any of them (RVZ/WIA: GameCube and Wii discs; PBP: PSP games) |
 
 Built on three libraries, linked statically from the submodules in `external/`:
 
 - [mCSO / maxcso](https://github.com/LunaMoo/maxcso) — CSO v1, CSO v2, ZSO and DAX
 - [CHDmodern](https://github.com/LunaMoo/CHDmodern) — MAME's CHD code (DVD CHDs, like `chdman createdvd`)
 - [iPBP](https://github.com/LunaMoo/iPBP) — PSN-style EBOOT.PBP (NPUMDIMG), LZRC and LZRC max
+- [iRVZ](https://github.com/LunaMoo/iRVZ) — WIA and RVZ (GameCube / Wii), from Dolphin's WIABlob
 
 ## What it does
 
@@ -19,7 +20,8 @@ Built on three libraries, linked statically from the submodules in `external/`:
   CSO defaults to libdeflate with 64K blocks (lz4 HC for ZSO); untick Default for maxcso's presets
   or a custom method set (zlib, brute force, 7-zip, Zopfli, libdeflate, lz4, lz4 HC),
   block size, Zopfli splits and the libdeflate pre-check; CHD codecs (lzma, zlib, zstd, huff, flac)
-  and hunk size; PBP compression level, content ID and boot screen.
+  and hunk size; PBP compression level, content ID and boot screen; RVZ/WIA method (LZMA2 by
+  default, or zstd, LZMA, bzip2, none, purge), level and chunk size.
 - **Extract** any of them back to ISO (PBPs trimmed to their ISO9660 size by default).
 - **Repack** between compressed formats (CHD → CSO, PBP → CHD, CSO → CSO with stronger settings, …)
   **through RAM**: the source is decompressed into memory through the libraries' writer callbacks
@@ -46,6 +48,7 @@ Built on three libraries, linked statically from the submodules in `external/`:
 isopackager-cli convert --to chd --codecs lzma+zstd -o D:\CHD D:\ISO
 isopackager-cli convert --to cso --preset max --block 16K game.chd      # repacked through RAM
 isopackager-cli convert --to zso -j 2 --delete-source D:\Games
+isopackager-cli convert --to rvz --rvz-method zstd --rvz-level 19 --rvz-chunk 256K D:\Wii
 isopackager-cli extract EBOOT.PBP
 isopackager-cli verify --against original.iso game.cso
 isopackager-cli info D:\Games
@@ -101,8 +104,9 @@ Two pieces of third-party code exist twice when mCSO, CHDmodern and iPBP are lin
 program. Both are resolved in ISOPackager's own `CMakeLists.txt`, without changing the submodules:
 
 - **zlib** — maxcso bundles 1.2.11, CHDmodern 1.3.2 (same API): CHDmodern uses maxcso's.
-- **LZMA SDK match finder** — maxcso's 7-zip deflate encoder bundles the 2017 `LzFind.c`,
-  CHDmodern's LZMA codec the 2024 one; they export the same `MatchFinder_*` names with different
+- **zstd** — CHDmodern and iRVZ bundle the same version: iRVZ uses CHDmodern's.
+- **LZMA SDK** — CHDmodern and iRVZ bundle the same 2024 files (iRVZ's adds LZMA2), built once
+  for both. maxcso's 7-zip deflate encoder bundles the 2017 `LzFind.c`, the others the 2024 one; they export the same `MatchFinder_*` names with different
   struct layouts, so a plain link would silently mix them. CHDmodern's copy is built with those
   symbols renamed (`cmake/lzma_rename.h`).
 

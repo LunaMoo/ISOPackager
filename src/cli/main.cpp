@@ -54,7 +54,7 @@ void Usage() {
 		"  bench     Benchmark settings on the given images (see Benchmark options).\n"
 		"  formats   List the supported formats.\n\n"
 		"Output:\n"
-		"  -f, --to FMT           iso, cso, cso2, zso, dax, chd, pbp\n"
+		"  -f, --to FMT           iso, cso, cso2, zso, dax, chd, pbp, rvz, wia\n"
 		"  -o, --output DIR       Output folder (default: next to each source)\n"
 		"      --flat             Don't recreate the scanned folders' structure under --output\n"
 		"      --no-recursive     Don't search subfolders\n"
@@ -80,6 +80,11 @@ void Usage() {
 		"CHD (CHDmodern):\n"
 		"      --hunk SIZE        Hunk size, multiple of 2048 (default 4096)\n"
 		"      --codecs LIST      default, or up to 4 of lzma,zlib,zstd,huff,flac joined by +\n\n"
+		"RVZ / WIA (iRVZ, GameCube and Wii discs):\n"
+		"      --rvz-method M     lzma2 (default), zstd, lzma, bzip2, none; WIA also purge, not zstd\n"
+		"      --rvz-level N      bzip2/lzma/lzma2 1-9 (default 5), zstd -22..22\n"
+		"      --rvz-chunk SIZE   RVZ: power of two from 32K or a multiple of 2M (default 128K);\n"
+		"                         WIA: a multiple of 2M (default 2M)\n\n"
 		"PBP (iPBP):\n"
 		"      --pbp-mode M       none, lzrc (default), max\n"
 		"      --content-id ID    Content ID (default derived from the disc ID)\n"
@@ -92,7 +97,7 @@ void Usage() {
 		"      --codecs LIST      CHD codec sets, comma separated, + inside a set; default default,lzma,zstd\n"
 		"      --hunks LIST       CHD hunk sizes; default 2048,4096,16384,65536\n"
 		"      --pbp-modes LIST   lzrc,max,none (default all)\n"
-		"      --extra LIST       Also zso,cso2,dax with the --preset/--methods settings\n"
+		"      --extra LIST       Also zso,cso2,dax (with the CSO options) and rvz,wia (with the --rvz-* options)\n"
 		"      --no-cso | --no-chd | --no-pbp\n"
 		"      --reads N          Random reads per image (default 4000)\n"
 		"      --source-on-disk   Compress from the ISO file instead of RAM\n"
@@ -283,6 +288,31 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 				err = "bad --codecs (default, or up to 4 of lzma,zlib,zstd,huff,flac joined by +)";
 				return false;
 			}
+		} else if (o == "--rvz-method") {
+			if (!val(v))
+				return false;
+			v = ToLower(v);
+			int m = -1;
+			for (int k = RVZ_NONE; k <= RVZ_ZSTD; ++k)
+				if (v == RvzMethodName(k))
+					m = k;
+			if (m < 0) {
+				err = "--rvz-method must be none, purge, bzip2, lzma, lzma2 or zstd";
+				return false;
+			}
+			a.s.rvz.useDefault = false;
+			a.s.rvz.method = m;
+		} else if (o == "--rvz-level") {
+			if (!val(v))
+				return false;
+			a.s.rvz.useDefault = false;
+			a.s.rvz.level = atoi(v.c_str());
+		} else if (o == "--rvz-chunk") {
+			if (!val(v) || !ParseU32Size(v, &a.s.rvz.chunk) || a.s.rvz.chunk < (32u << 10)) {
+				err = "bad --rvz-chunk (e.g. 128K, 2M)";
+				return false;
+			}
+			a.s.rvz.useDefault = false;
 		} else if (o == "--pbp-mode") {
 			if (!val(v))
 				return false;
@@ -495,6 +525,8 @@ int RunInfo(Args &a) {
 		if (i.isoSize)
 			printf("  image    %s (%llu bytes), %.2f%% of it\n", HumanBytes(i.isoSize).c_str(), (unsigned long long)i.isoSize,
 				100.0 * i.fileSize / i.isoSize);
+		if (i.platform != Platform::Unknown)
+			printf("  platform %s\n", PlatformLabel(i.platform));
 		if (!i.discId.empty())
 			printf("  disc ID  %s\n", i.discId.c_str());
 		if (!i.title.empty())
@@ -533,15 +565,19 @@ int RunBench(Args &a) {
 			cfg.cases.push_back(c);
 		}
 	}
+#endif
 	for (const std::string &e : Split(a.extra, ',')) {
 		Format f = FormatFromName(e);
-		if (!IsMcsoFormat(f)) {
-			fprintf(stderr, "--extra takes zso, cso2, dax, cso\n");
+		if (IsIrvzFormat(f)) {
+			cfg.cases.push_back(MakeRvzCase(f, a.s.rvz));
+			continue;
+		}
+		if (!IsMcsoFormat(f) || !FormatAvailable(f)) {
+			fprintf(stderr, "--extra takes zso, cso2, dax, cso, rvz, wia\n");
 			return 1;
 		}
 		cfg.cases.push_back(MakeMcsoCase(f, a.s.cso));
 	}
-#endif
 	if (!a.noChd) {
 		for (const std::string &codec : Split(a.codecs, ',')) {
 			ChdSettings probe;
@@ -587,7 +623,7 @@ int RunBench(Args &a) {
 		printf("\r\033[K");
 	int failed = 0;
 	for (auto &r : rows)
-		failed += r.failed || (r.verify != "OK" && r.verify != "not compared" && r.verify.rfind("OK", 0) != 0);
+		failed += (r.failed && r.error.rfind("skipped", 0) != 0) || (!r.failed && r.verify != "OK" && r.verify != "not compared" && r.verify.rfind("OK", 0) != 0);
 	return g_interrupted ? 130 : failed ? 2 : 0;
 }
 
