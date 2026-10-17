@@ -280,12 +280,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
 		g_app = &app;
 		int argc = 0;
 		LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-		std::vector<std::string> startPaths;
+		std::vector<std::string> args;
 		for (int i = 1; argv && i < argc; ++i)
-			if (argv[i][0] != L'-')
-				startPaths.push_back(ToUtf8(argv[i]));
+			args.push_back(ToUtf8(argv[i]));
 		LocalFree(argv);
-		app.AddPaths(startPaths);
+		app.HandleArgs(args);
 
 		bool done = false;
 		int idleFrames = 0;

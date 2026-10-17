@@ -41,6 +41,8 @@ public:
 
 	// Files dropped on the window or passed on the command line.
 	void AddPaths(const std::vector<std::string> &paths);
+	// Command line: [--to FMT] [--start] [files...]
+	void HandleArgs(const std::vector<std::string> &args);
 	void Frame();
 
 	// The platform asks before closing: true = close now. Otherwise the app asks the user and
@@ -139,6 +141,7 @@ private:
 	int activeTab_ = 0, requestTab_ = -1;
 	bool showDemo_ = false, quitRequested_ = false, quitConfirmed_ = false, showOverwriteWarning_ = false;
 	float appliedScale_ = 0;
+	bool startWhenScanned_ = false;
 	int appliedTheme_ = -1;
 };
 

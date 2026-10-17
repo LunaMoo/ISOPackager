@@ -654,6 +654,13 @@ void RunJob(Job &job) {
 		claim.Take(final);
 	}
 	res.outputPath = final;
+	// Folders this job creates go again if it doesn't finish (e.g. Game/ for Game/EBOOT.PBP).
+	std::vector<fs::path> createdDirs;
+	for (fs::path d = U8Path(final).parent_path(); !d.empty() && !fs::exists(d, ec); d = d.parent_path()) {
+		createdDirs.push_back(d);
+		if (d == d.parent_path())
+			break;
+	}
 	fs::create_directories(U8Path(final).parent_path(), ec);
 	if (ec)
 		return finish(JobState::Failed, "can't create " + PathU8(U8Path(final).parent_path()) + ": " + ec.message());
@@ -692,6 +699,9 @@ void RunJob(Job &job) {
 	};
 	auto fail = [&](const std::string &what) {
 		RemoveFile(part);
+		for (const fs::path &d : createdDirs)  // deepest first
+			if (fs::is_empty(d, ec))
+				fs::remove(d, ec);
 		if (ctx.cancelled || job.cancel.load())
 			return finish(JobState::Cancelled, "cancelled");
 		return finish(JobState::Failed, what.empty() ? ctx.error : what + ": " + ctx.error);

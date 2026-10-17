@@ -180,11 +180,10 @@ int main(int argc, char **argv) {
 
 	{
 		gui::App app(hooks);
-		std::vector<std::string> startPaths;
+		std::vector<std::string> args;
 		for (int i = 1; i < argc; ++i)
-			if (argv[i][0] != '-')
-				startPaths.push_back(argv[i]);
-		app.AddPaths(startPaths);
+			args.push_back(argv[i]);
+		app.HandleArgs(args);
 
 		bool done = false;
 		int idleFrames = 0;

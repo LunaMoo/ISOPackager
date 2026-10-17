@@ -111,6 +111,24 @@ void App::AddPaths(const std::vector<std::string> &paths) {
 		ScanAsync(paths, false);
 }
 
+void App::HandleArgs(const std::vector<std::string> &args) {
+	std::vector<std::string> paths;
+	for (size_t i = 0; i < args.size(); ++i) {
+		if ((args[i] == "--to" || args[i] == "-f") && i + 1 < args.size()) {
+			Format f = FormatFromName(args[++i]);
+			if (f != Format::Unknown && FormatAvailable(f))
+				addTarget_ = f;
+			else
+				Log(LogLevel::Warning, "Unknown format on the command line: " + args[i]);
+		} else if (args[i] == "--start") {
+			startWhenScanned_ = true;
+		} else if (!args[i].empty() && args[i][0] != '-') {
+			paths.push_back(args[i]);
+		}
+	}
+	AddPaths(paths);
+}
+
 void App::ScanAsync(const std::vector<std::string> &paths, bool forBench) {
 	++scansRunning_;
 	bool recursive = settings_.recursive;
@@ -203,6 +221,10 @@ void App::Frame() {
 		if (!scanned_.empty())
 			Log(LogLevel::Info, Fmt("Added %zu image(s)", scanned_.size()));
 		scanned_.clear();
+		if (startWhenScanned_ && scansRunning_ == 0) {
+			startWhenScanned_ = false;
+			queue_.Start();
+		}
 		for (const InputFile &f : benchScanned_) {
 			bool dup = false;
 			for (auto &b : benchInputs_)
