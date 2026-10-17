@@ -140,7 +140,7 @@ private:
 	FileBrowser browser_;
 	std::function<void(const std::vector<std::string> &)> browserThen_;
 	int activeTab_ = 0, requestTab_ = -1;
-	bool showDemo_ = false, quitRequested_ = false, quitConfirmed_ = false, showOverwriteWarning_ = false;
+	bool quitRequested_ = false, quitConfirmed_ = false, showOverwriteWarning_ = false;
 	float appliedScale_ = 0;
 	bool startWhenScanned_ = false;
 	int appliedTheme_ = -1;

@@ -1,6 +1,6 @@
 # ISOPackager
 
-Compress, extract, repack and benchmark PSP disc images — one file or whole folders — with a
+Compress, extract, repack and benchmark disc images — one file or whole folders — with a
 Dear ImGui interface and a command line tool that share the same engine.
 
 | In                                   | Out                                      |
@@ -125,6 +125,7 @@ unless another folder is chosen.
 
 ## License
 
-No license has been chosen for ISOPackager's own code yet. Note that **iPBP is GPL-3.0**, so
-binaries that link it (all of them, by default) must be distributed under GPL-3.0 terms. The other
-components are permissive: maxcso ISC, CHDmodern BSD-3-Clause (MAME), Dear ImGui MIT, SDL zlib.
+ISOPackager is released under the [GNU General Public License v3.0](LICENSE). It links iPBP
+(GPL-3.0), maxcso (ISC), CHDmodern (BSD-3-Clause, from MAME), Dear ImGui (MIT) and SDL (zlib).
+
+Made by Claude AI based on LunaMoo's idea.

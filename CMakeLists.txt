@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ISOPackager VERSION 0.1.0 DESCRIPTION "Compress, extract, repack and benchmark PSP disc images" LANGUAGES C CXX)
+project(ISOPackager VERSION 0.1.0 DESCRIPTION "Compress, extract, repack and benchmark disc images" LANGUAGES C CXX)
 
 # ISOPackager links mCSO (maxcso), CHDm (CHDmodern) and iPBP statically, from the submodules in external/.
 # Everything is built from source, so the same tree builds on Windows, Linux, macOS, FreeBSD,
@@ -222,8 +222,7 @@ endif()
 if(ISOPK_BUILD_GUI)
 	set(IMGUI ${EXT}/imgui)
 	add_library(isopk_imgui STATIC
-		${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
-		${IMGUI}/imgui_demo.cpp)
+		${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp)
 	target_include_directories(isopk_imgui PUBLIC ${IMGUI} ${IMGUI}/backends)
 	target_compile_definitions(isopk_imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 

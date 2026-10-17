@@ -291,8 +291,6 @@ void App::Frame() {
 	DrawModals();
 	ImGui::End();
 
-	if (showDemo_)
-		ImGui::ShowDemoWindow(&showDemo_);
 }
 
 // ---- Toolbar ----------------------------------------------------------------------------------

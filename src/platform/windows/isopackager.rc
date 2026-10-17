@@ -16,7 +16,7 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "LunaMoo"
-            VALUE "FileDescription", "ISOPackager - PSP disc image compressor and benchmark"
+            VALUE "FileDescription", "ISOPackager - disc image compressor and benchmark"
             VALUE "FileVersion", "0.1.0"
             VALUE "InternalName", "ISOPackager"
             VALUE "OriginalFilename", "ISOPackager.exe"

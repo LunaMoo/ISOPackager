@@ -795,7 +795,7 @@ void App::DrawLog() {
 
 void App::DrawAbout() {
 	ImGui::Text("ISOPackager %s", ISOPK_VERSION);
-	ImGui::TextDisabled("Compress, extract, repack and benchmark PSP disc images.");
+	ImGui::TextDisabled("Compress, extract, repack and benchmark disc images.");
 	ImGui::Spacing();
 	ImGui::Text("Libraries: %s, Dear ImGui %s", LibraryVersions().c_str(), IMGUI_VERSION);
 	ImGui::Text("System: %s, %u cores, %s RAM", PlatformName().c_str(), CpuCount(), HumanBytes(TotalRam()).c_str());
@@ -823,7 +823,8 @@ void App::DrawAbout() {
 		ImGui::TextDisabled("%s", l[1]);
 	}
 	ImGui::Spacing();
-	ImGui::Checkbox("Show the Dear ImGui demo", &showDemo_);
+	ImGui::Separator();
+	ImGui::TextUnformatted("Made by Claude AI based on LunaMoo idea, released under GPL 3.0 license.");
 }
 
 // ---- Status bar and dialogs -------------------------------------------------------------------
