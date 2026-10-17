@@ -15,6 +15,7 @@
 #include "core/formats.h"
 
 struct chdm_file;  // CHDmodern
+struct irvz_file;  // iRVZ
 
 namespace isopk {
 
@@ -79,6 +80,21 @@ public:
 private:
 	chdm_file *file_ = nullptr;
 	uint64_t size_ = 0;
+};
+
+// WIA and RVZ (iRVZ).
+class IrvzImageReader : public ImageReader {
+public:
+	~IrvzImageReader() override;
+	bool Open(const std::string &path);
+	uint64_t Size() const override { return size_; }
+	bool ReadAt(uint64_t offset, void *buf, size_t len) override;
+	uint32_t ChunkSize() const { return chunk_; }
+
+private:
+	irvz_file *file_ = nullptr;
+	uint64_t size_ = 0;
+	uint32_t chunk_ = 0;
 };
 
 // The right reader for the format, or null (PBP and DAX have no random access).
@@ -191,7 +207,9 @@ private:
 // ---- Disc metadata ----------------------------------------------------------------------------
 
 // Reads UMD_DATA.BIN and PSP_GAME/PARAM.SFO through the ISO9660 file system.
-bool ReadDiscInfo(ImageReader &image, std::string *discId, std::string *title);
+// Disc ID, title and platform: PSP (UMD_DATA.BIN, PSP_GAME/PARAM.SFO), GameCube / Wii (disc
+// header), or another ISO9660 image.
+bool ReadDiscInfo(ImageReader &image, std::string *discId, std::string *title, Platform *platform = nullptr);
 // ISO9660 volume size in bytes (the size a good dump has), or 0.
 uint64_t IsoVolumeSize(ImageReader &image);
 

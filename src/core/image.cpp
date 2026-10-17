@@ -5,6 +5,7 @@
 #include <new>
 
 #include <chdmodern/chdmodern.h>
+#include <irvz/irvz.h>
 #include <zlib.h>
 #ifdef ISOPK_WITH_CSO
 #include <lz4.h>
@@ -222,6 +223,37 @@ bool ChdImageReader::ReadAt(uint64_t offset, void *buf, size_t len) {
 	return true;
 }
 
+// ---- IrvzImageReader --------------------------------------------------------------------------
+
+IrvzImageReader::~IrvzImageReader() {
+	irvz_close(file_);
+}
+
+bool IrvzImageReader::Open(const std::string &path) {
+	if (irvz_open(path.c_str(), &file_) != IRVZ_OK) {
+		error_ = irvz_last_error();
+		file_ = nullptr;
+		return false;
+	}
+	irvz_info info{};
+	irvz_get_info(file_, &info);
+	size_ = info.iso_size;
+	chunk_ = info.chunk_size;
+	return true;
+}
+
+bool IrvzImageReader::ReadAt(uint64_t offset, void *buf, size_t len) {
+	if (offset + len > size_) {
+		error_ = "read past the end of the image";
+		return false;
+	}
+	if (irvz_read(file_, offset, buf, len) != IRVZ_OK) {
+		error_ = irvz_last_error();
+		return false;
+	}
+	return true;
+}
+
 std::unique_ptr<ImageReader> OpenImageReader(const std::string &path, Format format, std::string *error) {
 	std::unique_ptr<ImageReader> r;
 	bool ok = false;
@@ -242,6 +274,13 @@ std::unique_ptr<ImageReader> OpenImageReader(const std::string &path, Format for
 	}
 	case Format::CHD: {
 		auto f = std::make_unique<ChdImageReader>();
+		ok = f->Open(path);
+		r = std::move(f);
+		break;
+	}
+	case Format::WIA:
+	case Format::RVZ: {
+		auto f = std::make_unique<IrvzImageReader>();
 		ok = f->Open(path);
 		r = std::move(f);
 		break;
@@ -570,10 +609,34 @@ uint64_t IsoVolumeSize(ImageReader &img) {
 	return (uint64_t)Le32(pvd + 80) * Le16(pvd + 128);
 }
 
-bool ReadDiscInfo(ImageReader &img, std::string *discId, std::string *title) {
+static std::string HeaderString(const uint8_t *p, size_t n) {
+	std::string s((const char *)p, strnlen((const char *)p, n));
+	while (!s.empty() && (s.back() == ' ' || s.back() == '\0'))
+		s.pop_back();
+	return s;
+}
+
+bool ReadDiscInfo(ImageReader &img, std::string *discId, std::string *title, Platform *platform) {
+	// GameCube / Wii: game ID at 0, magic at 0x18 (Wii) or 0x1C (GameCube), title at 0x20.
+	uint8_t hdr[0x60];
+	if (img.Size() >= sizeof(hdr) && img.ReadAt(0, hdr, sizeof(hdr))) {
+		const bool wii = memcmp(hdr + 0x18, "\x5D\x1C\x9E\xA3", 4) == 0;
+		const bool gc = memcmp(hdr + 0x1C, "\xC2\x33\x9F\x3D", 4) == 0;
+		if (wii || gc) {
+			if (platform)
+				*platform = wii ? Platform::Wii : Platform::GameCube;
+			if (discId)
+				*discId = HeaderString(hdr, 6);
+			if (title)
+				*title = HeaderString(hdr + 0x20, 0x40);
+			return true;
+		}
+	}
 	DirEntry root;
 	if (!ReadRoot(img, &root))
 		return false;
+	if (platform)
+		*platform = Platform::OtherIso;
 	bool any = false;
 	DirEntry e;
 	if (discId && FindInDir(img, root.lba, root.size, "UMD_DATA.BIN", &e) && e.size > 0) {
@@ -586,6 +649,8 @@ bool ReadDiscInfo(ImageReader &img, std::string *discId, std::string *title) {
 			if (!id.empty()) {
 				*discId = id;
 				any = true;
+				if (platform)
+					*platform = Platform::PSP;
 			}
 		}
 	}
@@ -593,6 +658,8 @@ bool ReadDiscInfo(ImageReader &img, std::string *discId, std::string *title) {
 	if (FindInDir(img, root.lba, root.size, "PSP_GAME", &game) && game.dir &&
 		FindInDir(img, game.lba, game.size, "PARAM.SFO", &sfoEntry) && sfoEntry.size > 0 && sfoEntry.size < (1u << 20)) {
 		std::vector<uint8_t> sfo(sfoEntry.size);
+		if (platform)
+			*platform = Platform::PSP;
 		if (img.ReadAt((uint64_t)sfoEntry.lba * 2048, sfo.data(), sfo.size())) {
 			std::string s;
 			if (title && SfoString(sfo, "TITLE", &s)) {

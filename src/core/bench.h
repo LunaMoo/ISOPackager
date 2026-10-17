@@ -18,6 +18,7 @@ struct BenchCase {
 	CsoSettings cso;
 	ChdSettings chd;
 	PbpSettings pbp;
+	RvzSettings rvz;
 	std::string label;  // "B zopfli5 splits20 256K", "default hunk 4096", ...
 };
 
@@ -34,6 +35,7 @@ BenchCase MakePbpCase(int compress);
 BenchCase MakeMcsoCase(Format f, const CsoSettings &cso);  // any mCSO format with these settings
 BenchCase MakeChdCase(const ChdSettings &chd);
 BenchCase MakePbpCase(const PbpSettings &pbp);
+BenchCase MakeRvzCase(Format f, const RvzSettings &rvz);  // WIA or RVZ
 
 // One line per case ("f=cso;d=0;p=3;b=262144;m=16;..."), for saving the GUI's benchmark list.
 // The label is rebuilt from the settings when parsing.

@@ -111,8 +111,19 @@ BenchCase MakePbpCase(const PbpSettings &pbp) {
 	return c;
 }
 
+BenchCase MakeRvzCase(Format f, const RvzSettings &rvz) {
+	BenchCase c;
+	c.format = f;
+	c.rvz = rvz;
+	c.label = rvz.Describe(f);
+	return c;
+}
+
 std::string SerializeBenchCase(const BenchCase &c) {
 	switch (c.format) {
+	case Format::WIA:
+	case Format::RVZ:
+		return Fmt("f=%s;d=%d;m=%d;l=%d;k=%u", FormatKey(c.format), c.rvz.useDefault, c.rvz.method, c.rvz.level, c.rvz.chunk);
 	case Format::CHD:
 		return Fmt("f=chd;h=%u;c=%s", c.chd.hunkBytes, c.chd.CodecsString().c_str());
 	case Format::PBP:
@@ -144,6 +155,15 @@ bool ParseBenchCase(const std::string &line, BenchCase *out) {
 		if (chd.hunkBytes % 2048 || !chd.SetCodecs(kv.count("c") ? kv["c"] : "default"))
 			return false;
 		*out = MakeChdCase(chd);
+		return true;
+	}
+	if (IsIrvzFormat(f)) {
+		RvzSettings rvz;
+		rvz.useDefault = num("d", 1) != 0;
+		rvz.method = std::clamp((int)num("m", RVZ_LZMA2), (int)RVZ_NONE, (int)RVZ_ZSTD);
+		rvz.level = (int)num("l", 5);
+		rvz.chunk = (uint32_t)num("k", 0);
+		*out = MakeRvzCase(f, rvz);
 		return true;
 	}
 	if (f == Format::PBP) {
@@ -263,6 +283,31 @@ double CsoRandomReadMs(const std::string &path, int reads) {
 	return SecondsSince(t0) * 1000.0 / std::max(1, n);
 }
 
+// Reads 2 KiB from a random place in each of reads chunks not read before (each decompresses a chunk).
+double IrvzRandomReadMs(const std::string &path, int reads) {
+	IrvzImageReader r;
+	if (!r.Open(path) || !r.ChunkSize() || r.Size() < 2048)
+		return -1;
+	const uint32_t chunk = r.ChunkSize();
+	const uint64_t chunks = (r.Size() + chunk - 1) / chunk;
+	std::vector<uint64_t> order(chunks);
+	for (uint64_t i = 0; i < chunks; ++i)
+		order[i] = i;
+	std::mt19937 rng(12345);
+	std::shuffle(order.begin(), order.end(), rng);
+	int n = (int)std::min<uint64_t>((uint64_t)reads, chunks);
+	uint8_t buf[2048];
+	auto t0 = Clock::now();
+	for (int i = 0; i < n; ++i) {
+		uint64_t off = order[i] * chunk + (rng() % (chunk / 2048)) * 2048;
+		if (off + sizeof(buf) > r.Size())
+			off = r.Size() - sizeof(buf);
+		if (!r.ReadAt(off, buf, sizeof(buf)))
+			return -1;
+	}
+	return SecondsSince(t0) * 1000.0 / std::max(1, n);
+}
+
 double ChdRandomReadMs(const std::string &path, int reads) {
 	ChdImageReader r;
 	if (!r.Open(path))
@@ -376,6 +421,11 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 			ref = &fileRef;
 		}
 		const uint64_t size = ref->Size();
+		Platform platform = Platform::Unknown;
+		{
+			std::string id, title;
+			ReadDiscInfo(*ref, &id, &title, &platform);
+		}
 
 		uint64_t freeSpace = FreeDiskSpace(PathU8(tmp));
 		if (freeSpace != UINT64_MAX && freeSpace < size + (256ull << 20))
@@ -396,8 +446,19 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 			r.setting = bc.label;
 			r.input = size;
 
+			if (std::string why = TargetRejects(bc.format, platform); !why.empty()) {
+				r.failed = true;
+				r.error = "skipped: " + why;
+				log(BenchTableLine(r));
+				rows.push_back(r);
+				if (cb.row)
+					cb.row(r);
+				++step;
+				continue;
+			}
 			Settings s = base;
 			s.cso = bc.cso;
+			s.rvz = bc.rvz;
 			s.chd = bc.chd;
 			s.pbp = bc.pbp;
 			s.pbp.verifyMacs = true;
@@ -425,6 +486,8 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 					cb.progress(what + " - random reads", 0, (step + 0.7) / totalSteps);
 				if (bc.format == Format::CHD)
 					r.readMs = ChdRandomReadMs(out, cfg.reads);
+				else if (IsIrvzFormat(bc.format))
+					r.readMs = IrvzRandomReadMs(out, cfg.reads);
 				else if (bc.format == Format::CSO || bc.format == Format::CSO2 || bc.format == Format::ZSO)
 					r.readMs = CsoRandomReadMs(out, cfg.reads);
 

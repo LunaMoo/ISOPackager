@@ -169,4 +169,39 @@ inline std::vector<uint8_t> MakeIso(uint32_t sizeMB, const std::string &discId =
 	return iso;
 }
 
+// A small GameCube disc: header (game ID, magic, title), an FST with a few files (random, zeros,
+// text) and zeros elsewhere. sizeMB rounded to whole 2 KiB sectors.
+inline void PutBE32(std::vector<uint8_t> &b, size_t at, uint32_t v) {
+	for (int i = 0; i < 4; ++i)
+		b[at + i] = (uint8_t)(v >> (24 - 8 * i));
+}
+
+inline std::vector<uint8_t> MakeGameCubeDisc(uint32_t sizeMB, const std::string &gameId = "GTST01", const std::string &title = "ISOPackager GC Test") {
+	std::vector<uint8_t> d((size_t)sizeMB << 20, 0);
+	memcpy(d.data(), gameId.data(), 6);
+	PutBE32(d, 0x1C, 0xC2339F3D);
+	memcpy(d.data() + 0x20, title.data(), title.size());
+	struct F {
+		uint32_t offset, size;
+		int kind;
+	} files[] = { { 0x20000, 0x123457, 0 }, { 0x200000, 0x300000, 1 }, { 0x500000, 0x180001, 2 } };
+	const size_t entries = 1 + 3, fst = 0x10000, fstSize = entries * 12 + entries * 8;
+	PutBE32(d, 0x424, (uint32_t)fst);
+	PutBE32(d, 0x428, (uint32_t)fstSize);
+	PutBE32(d, 0x42C, (uint32_t)fstSize);
+	PutBE32(d, fst, 0x01000000);
+	PutBE32(d, fst + 8, (uint32_t)entries);
+	std::mt19937 rng(7);
+	for (size_t i = 0; i < 3; ++i) {
+		PutBE32(d, fst + (i + 1) * 12, (uint32_t)(i * 8));
+		PutBE32(d, fst + (i + 1) * 12 + 4, files[i].offset);
+		PutBE32(d, fst + (i + 1) * 12 + 8, files[i].size);
+		snprintf((char *)d.data() + fst + entries * 12 + i * 8, 8, "f%zu", i);
+		uint8_t *p = d.data() + files[i].offset;
+		for (uint32_t k = 0; k < files[i].size; ++k)
+			p[k] = files[i].kind == 0 ? (uint8_t)rng() : files[i].kind == 1 ? 0 : (uint8_t)"gamecube wii disc "[k % 18];
+	}
+	return d;
+}
+
 }  // namespace testiso

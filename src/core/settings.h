@@ -70,6 +70,30 @@ struct PbpSettings {
 };
 const char *PbpModeName(int compress);
 
+// ---- RVZ / WIA (iRVZ) -------------------------------------------------------------------------
+
+// Methods, as irvz_compression: 0 none, 1 purge (WIA only), 2 bzip2, 3 LZMA, 4 LZMA2, 5 zstd (RVZ only).
+enum RvzMethod { RVZ_NONE = 0, RVZ_PURGE = 1, RVZ_BZIP2 = 2, RVZ_LZMA = 3, RVZ_LZMA2 = 4, RVZ_ZSTD = 5 };
+const char *RvzMethodName(int method);
+// Levels a method takes (min > max when it has none): bzip2/LZMA/LZMA2 1-9, zstd -22..22.
+void RvzMethodLevels(int method, int *min, int *max);
+bool RvzMethodAllowed(Format format, int method);
+
+struct RvzSettings {
+	// The default: LZMA2 level 5, the format's default chunk (RVZ 128K, WIA 2M). When set,
+	// everything below is ignored.
+	bool useDefault = true;
+	int method = RVZ_LZMA2;
+	int level = 5;
+	uint32_t chunk = 0;  // 0 = the format's default; RVZ: power of two from 32K or multiple of 2M; WIA: multiple of 2M
+
+	// What actually goes to iRVZ for format (methods and chunks it can't take are adjusted).
+	int EffectiveMethod(Format format) const;
+	int EffectiveLevel(Format format) const;
+	uint32_t EffectiveChunk(Format format) const;
+	std::string Describe(Format format) const;
+};
+
 // ---- Where outputs go -------------------------------------------------------------------------
 
 enum class Conflict { Skip, Overwrite, Rename };
@@ -102,6 +126,7 @@ struct Settings {
 	CsoSettings cso;
 	ChdSettings chd;
 	PbpSettings pbp;
+	RvzSettings rvz;
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders

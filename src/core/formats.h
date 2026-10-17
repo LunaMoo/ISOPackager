@@ -16,6 +16,8 @@ enum class Format {
 	DAX,   // DAX (zlib, fixed 8K frames), via mCSO
 	CHD,   // MAME CHD, DVD type, via CHDmodern
 	PBP,   // PSN EBOOT.PBP (NPUMDIMG), via iPBP
+	WIA,   // GameCube / Wii WIA (wit), via iRVZ
+	RVZ,   // GameCube / Wii RVZ (Dolphin), via iRVZ
 	Count
 };
 
@@ -25,6 +27,14 @@ const char *FormatExtension(Format f);   // ".cso", ".chd", ".pbp" (PBP as a sin
 const char *FormatDescription(Format f); // one line for the UI
 Format FormatFromName(const std::string &s);  // "cso", "cso2", "zso", "dax", "chd", "pbp", "iso"
 bool IsMcsoFormat(Format f);
+bool IsIrvzFormat(Format f);  // WIA, RVZ
+
+// What kind of disc an image holds; decides which formats can store it (RVZ/WIA only take
+// GameCube and Wii discs, EBOOT.PBP only PSP games).
+enum class Platform { Unknown, PSP, GameCube, Wii, OtherIso };
+const char *PlatformLabel(Platform p);
+// Empty when target can hold a disc of this platform, otherwise why not.
+std::string TargetRejects(Format target, Platform p);
 // Whether this build can read or write the format (CSO family needs mCSO).
 bool FormatAvailable(Format f);
 // The output formats, in the order the UI lists them.
@@ -44,7 +54,8 @@ struct ImageInfo {
 	uint32_t blockSize = 0;    // CSO block / CHD hunk / PBP block
 	std::string detail;        // "zlib+lzma, hunk 4096", "LZRC", ...
 	std::string discId;        // "ULUS10041" when found
-	std::string title;         // from PARAM.SFO when found
+	std::string title;         // from PARAM.SFO / the GameCube-Wii header when found
+	Platform platform = Platform::Unknown;
 	std::string error;         // set when the image could not be inspected
 };
 

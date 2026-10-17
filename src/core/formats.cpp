@@ -5,6 +5,7 @@
 
 #include <chdmodern/chdmodern.h>
 #include <ipbp/ipbp.h>
+#include <irvz/irvz.h>
 
 #include "core/fileio.h"
 #include "core/image.h"
@@ -21,6 +22,8 @@ const char *FormatName(Format f) {
 	case Format::DAX: return "DAX";
 	case Format::CHD: return "CHD";
 	case Format::PBP: return "PBP";
+	case Format::WIA: return "WIA";
+	case Format::RVZ: return "RVZ";
 	default: return "?";
 	}
 }
@@ -34,6 +37,8 @@ const char *FormatKey(Format f) {
 	case Format::DAX: return "dax";
 	case Format::CHD: return "chd";
 	case Format::PBP: return "pbp";
+	case Format::WIA: return "wia";
+	case Format::RVZ: return "rvz";
 	default: return "unknown";
 	}
 }
@@ -47,6 +52,8 @@ const char *FormatExtension(Format f) {
 	case Format::DAX: return ".dax";
 	case Format::CHD: return ".chd";
 	case Format::PBP: return ".pbp";
+	case Format::WIA: return ".wia";
+	case Format::RVZ: return ".rvz";
 	default: return "";
 	}
 }
@@ -60,6 +67,8 @@ const char *FormatDescription(Format f) {
 	case Format::DAX: return "DAX, zlib 8K frames (old PSP CFW)";
 	case Format::CHD: return "MAME CHD (DVD), LZMA/zlib/zstd/FLAC hunks (PPSSPP)";
 	case Format::PBP: return "PSN EBOOT.PBP, LZRC blocks (PSP, PPSSPP)";
+	case Format::WIA: return "WIA, GameCube/Wii discs: bzip2/LZMA/LZMA2 chunks (wit, Dolphin)";
+	case Format::RVZ: return "RVZ, GameCube/Wii discs: zstd/LZMA2/bzip2 chunks, junk removed (Dolphin)";
 	default: return "";
 	}
 }
@@ -75,11 +84,35 @@ Format FormatFromName(const std::string &in) {
 	if (s == "dax") return Format::DAX;
 	if (s == "chd") return Format::CHD;
 	if (s == "pbp" || s == "eboot") return Format::PBP;
+	if (s == "wia") return Format::WIA;
+	if (s == "rvz") return Format::RVZ;
 	return Format::Unknown;
 }
 
 bool IsMcsoFormat(Format f) {
 	return f == Format::CSO || f == Format::CSO2 || f == Format::ZSO || f == Format::DAX;
+}
+
+bool IsIrvzFormat(Format f) {
+	return f == Format::WIA || f == Format::RVZ;
+}
+
+const char *PlatformLabel(Platform p) {
+	switch (p) {
+	case Platform::PSP: return "PSP";
+	case Platform::GameCube: return "GameCube";
+	case Platform::Wii: return "Wii";
+	case Platform::OtherIso: return "ISO";
+	default: return "";
+	}
+}
+
+std::string TargetRejects(Format target, Platform p) {
+	if (IsIrvzFormat(target) && p != Platform::Unknown && p != Platform::GameCube && p != Platform::Wii)
+		return std::string(FormatName(target)) + " only holds GameCube and Wii discs" + (p == Platform::PSP ? " (this is a PSP game)" : "");
+	if (target == Format::PBP && p != Platform::Unknown && p != Platform::PSP)
+		return std::string("EBOOT.PBP only holds PSP games") + (p == Platform::GameCube || p == Platform::Wii ? Fmt(" (this is a %s disc)", PlatformLabel(p)) : "");
+	return {};
 }
 
 bool FormatAvailable(Format f) {
@@ -93,7 +126,7 @@ bool FormatAvailable(Format f) {
 const std::vector<Format> &OutputFormats() {
 	static const std::vector<Format> list = [] {
 		std::vector<Format> v;
-		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::ISO, Format::CSO2, Format::DAX })
+		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::RVZ, Format::WIA, Format::ISO, Format::CSO2, Format::DAX })
 			if (FormatAvailable(f))
 				v.push_back(f);
 		return v;
@@ -102,7 +135,8 @@ const std::vector<Format> &OutputFormats() {
 }
 
 bool IsImageExtension(const std::string &ext) {
-	return ext == ".iso" || ext == ".cso" || ext == ".zso" || ext == ".dax" || ext == ".chd" || ext == ".pbp";
+	return ext == ".iso" || ext == ".cso" || ext == ".zso" || ext == ".dax" || ext == ".chd" || ext == ".pbp" || ext == ".wia" ||
+		ext == ".rvz" || ext == ".gcm";
 }
 
 Format DetectFormat(const std::string &path) {
@@ -118,11 +152,18 @@ Format DetectFormat(const std::string &path) {
 		return Format::CHD;
 	if (n >= 8 && memcmp(h, "\0PBP", 4) == 0)
 		return Format::PBP;
+	if (n >= 4 && memcmp(h, "WIA\x01", 4) == 0)
+		return Format::WIA;
+	if (n >= 4 && memcmp(h, "RVZ\x01", 4) == 0)
+		return Format::RVZ;
 	if (n >= 0x8006 && memcmp(h + 0x8001, "CD001", 5) == 0)
+		return Format::ISO;
+	// GameCube / Wii images have no ISO9660 volume: their magic words are in the disc header.
+	if (n >= 0x20 && (memcmp(h + 0x18, "\x5D\x1C\x9E\xA3", 4) == 0 || memcmp(h + 0x1C, "\xC2\x33\x9F\x3D", 4) == 0))
 		return Format::ISO;
 	// A headerless or damaged image: trust the extension.
 	std::string ext = ToLower(PathU8(U8Path(path).extension()));
-	if (ext == ".iso")
+	if (ext == ".iso" || ext == ".gcm")
 		return Format::ISO;
 	return Format::Unknown;
 }
@@ -207,16 +248,44 @@ ImageInfo InspectImage(const std::string &path) {
 		ipbp_job_destroy(job);
 		break;
 	}
+	case Format::WIA:
+	case Format::RVZ: {
+		irvz_file *f = nullptr;
+		if (irvz_open(path.c_str(), &f) == IRVZ_OK) {
+			irvz_info ri{};
+			irvz_get_info(f, &ri);
+			info.isoSize = ri.iso_size;
+			info.blockSize = ri.chunk_size;
+			info.discId = ri.game_id;
+			info.title = ri.title;
+			info.platform = ri.disc_type == 1 ? Platform::GameCube : ri.disc_type == 2 ? Platform::Wii : Platform::Unknown;
+			std::string level = ri.compression == IRVZ_COMPRESSION_NONE || ri.compression == IRVZ_COMPRESSION_PURGE
+				? std::string() : Fmt(" level %d", ri.compression_level);
+			info.detail = Fmt("%s%s, chunk %uK", irvz_compression_name(ri.compression), level.c_str(), ri.chunk_size / 1024);
+			irvz_close(f);
+		} else {
+			info.error = std::string("iRVZ: ") + irvz_last_error();
+		}
+		break;
+	}
 	default:
 		info.error = "not a recognised disc image";
 		break;
 	}
+	if (info.format == Format::PBP && info.error.empty())
+		info.platform = Platform::PSP;
 
-	if (info.discId.empty() && info.error.empty()) {
+	if (info.error.empty() && (info.discId.empty() || info.platform == Platform::Unknown)) {
 		std::string err;
 		auto reader = OpenImageReader(path, info.format, &err);
-		if (reader)
-			ReadDiscInfo(*reader, &info.discId, &info.title);
+		if (reader) {
+			std::string id, title;
+			ReadDiscInfo(*reader, &id, &title, &info.platform);
+			if (info.discId.empty())
+				info.discId = id;
+			if (info.title.empty())
+				info.title = title;
+		}
 	}
 	return info;
 }

@@ -1,5 +1,6 @@
 #include "core/settings.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -182,6 +183,87 @@ std::string PbpSettings::Describe() const {
 	return compress == 2 ? "LZRC max" : compress ? "LZRC" : "uncompressed";
 }
 
+const char *RvzMethodName(int m) {
+	switch (m) {
+	case RVZ_NONE: return "none";
+	case RVZ_PURGE: return "purge";
+	case RVZ_BZIP2: return "bzip2";
+	case RVZ_LZMA: return "lzma";
+	case RVZ_LZMA2: return "lzma2";
+	case RVZ_ZSTD: return "zstd";
+	default: return "?";
+	}
+}
+
+void RvzMethodLevels(int m, int *min, int *max) {
+	if (m == RVZ_BZIP2 || m == RVZ_LZMA || m == RVZ_LZMA2) {
+		*min = 1;
+		*max = 9;
+	} else if (m == RVZ_ZSTD) {
+		*min = -22;
+		*max = 22;
+	} else {
+		*min = 1;
+		*max = 0;
+	}
+}
+
+bool RvzMethodAllowed(Format f, int m) {
+	if (m < RVZ_NONE || m > RVZ_ZSTD)
+		return false;
+	if (f == Format::WIA)
+		return m != RVZ_ZSTD;
+	return m != RVZ_PURGE;  // RVZ
+}
+
+int RvzSettings::EffectiveMethod(Format f) const {
+	int m = useDefault ? RVZ_LZMA2 : method;
+	if (!RvzMethodAllowed(f, m))
+		m = f == Format::WIA ? RVZ_LZMA2 : (m == RVZ_PURGE ? RVZ_NONE : RVZ_LZMA2);
+	return m;
+}
+
+int RvzSettings::EffectiveLevel(Format f) const {
+	int lo, hi;
+	RvzMethodLevels(EffectiveMethod(f), &lo, &hi);
+	if (lo > hi)
+		return 0;
+	return useDefault ? 5 : std::clamp(level, lo, hi);
+}
+
+uint32_t RvzSettings::EffectiveChunk(Format f) const {
+	const uint32_t twoMB = 2u << 20;
+	uint32_t c = useDefault ? 0 : chunk;
+	if (c == 0)
+		return f == Format::WIA ? twoMB : 128u << 10;
+	if (f == Format::WIA)  // multiples of 2M only
+		return std::max(twoMB, (c + twoMB - 1) / twoMB * twoMB);
+	if (c < (32u << 10))
+		return 32u << 10;
+	if (c < twoMB) {  // power of two
+		uint32_t p = 32u << 10;
+		while (p < c)
+			p <<= 1;
+		return p;
+	}
+	return (c + twoMB - 1) / twoMB * twoMB;
+}
+
+std::string RvzSettings::Describe(Format f) const {
+	const int m = EffectiveMethod(f);
+	std::string s = useDefault ? "default (" : "";
+	s += RvzMethodName(m);
+	int lo, hi;
+	RvzMethodLevels(m, &lo, &hi);
+	if (lo <= hi)
+		s += Fmt(" %d", EffectiveLevel(f));
+	const uint32_t c = EffectiveChunk(f);
+	s += c >= (1u << 20) ? Fmt(" %uM", c >> 20) : Fmt(" %uK", c >> 10);
+	if (useDefault)
+		s += ")";
+	return s;
+}
+
 const char *ConflictName(Conflict c) {
 	switch (c) {
 	case Conflict::Overwrite: return "overwrite";
@@ -284,6 +366,18 @@ bool Settings::Load(const std::string &path) {
 	else if (s == "folder")
 		pbp.layout = PbpLayout::Folder;
 
+	boolean("rvz.default", rvz.useDefault);
+	{
+		s.clear();
+		str("rvz.method", s);
+		for (int m = RVZ_NONE; m <= RVZ_ZSTD; ++m)
+			if (s == RvzMethodName(m))
+				rvz.method = m;
+		double lvl = rvz.level;
+		dbl("rvz.level", lvl);
+		rvz.level = (int)lvl;
+		u32("rvz.chunk", rvz.chunk);
+	}
 	str("out.dir", out.dir);
 	boolean("out.mirror", out.mirrorTree);
 	s.clear();
@@ -333,6 +427,7 @@ bool Settings::Save(const std::string &path) const {
 	t += Fmt("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
 	t += Fmt("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
 		pbp.contentId.c_str(), pbp.startDatPng.c_str(), pbp.trimOnExtract, pbp.verifyMacs, pbp.layout == PbpLayout::File ? "file" : "folder");
+	t += Fmt("rvz.default=%d\nrvz.method=%s\nrvz.level=%d\nrvz.chunk=%u\n", rvz.useDefault, RvzMethodName(rvz.method), rvz.level, rvz.chunk);
 	t += Fmt("out.dir=%s\nout.mirror=%d\nout.conflict=%s\nout.delete_source=%d\n", out.dir.c_str(), out.mirrorTree, ConflictName(out.conflict),
 		out.deleteSource);
 	t += Fmt("engine.verify=%d\nengine.ram_repack=%d\nengine.ram_budget=%llu\nengine.temp_dir=%s\n", engine.verify, engine.repackInRam,

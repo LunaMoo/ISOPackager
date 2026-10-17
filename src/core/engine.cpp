@@ -9,6 +9,7 @@
 
 #include <chdmodern/chdmodern.h>
 #include <ipbp/ipbp.h>
+#include <irvz/irvz.h>
 #ifdef ISOPK_WITH_CSO
 #include <maxcso_capi.h>
 #endif
@@ -298,6 +299,62 @@ void PbpExtractOptions(const Settings &s, bool trim, ipbp_pbp2iso_options *o) {
 	o->threads = s.engine.threads;
 }
 
+// --- iRVZ
+
+int IrvzProgress(void *user, uint64_t done, uint64_t total) {
+	OpContext *ctx = (OpContext *)user;
+	if (ctx->progress && total)
+		ctx->progress((double)done / (double)total);
+	return ctx->Cancelled() ? 1 : 0;
+}
+
+int IrvzRead(void *user, uint64_t offset, void *buf, size_t len) {
+	ReaderBox *box = (ReaderBox *)user;
+	size_t n = Clamp(*box->reader, offset, len);
+	if (n && !box->Read(offset, buf, n))
+		return 1;
+	if (n < len)
+		memset((uint8_t *)buf + n, 0, len - n);
+	return 0;
+}
+
+int IrvzBegin(void *user, uint64_t size) {
+	return ((ImageWriter *)user)->Begin(size) ? 0 : 1;
+}
+
+int IrvzWrite(void *user, uint64_t offset, const void *buf, size_t len) {
+	return ((ImageWriter *)user)->WriteAt(offset, buf, len) ? 0 : 1;
+}
+
+int IrvzFinish(void *user, uint64_t finalSize) {
+	return ((ImageWriter *)user)->Finish(finalSize) ? 0 : 1;
+}
+
+bool IrvzResult(int rc, OpContext &ctx, ImageWriter *w = nullptr) {
+	if (rc == IRVZ_OK)
+		return true;
+	if (rc == IRVZ_ERR_CANCELLED || ctx.Cancelled()) {
+		ctx.cancelled = true;
+		SetError(ctx, "cancelled");
+	} else if (w && !w->Error().empty()) {
+		SetError(ctx, w->Error());
+	} else {
+		const char *detail = irvz_last_error();
+		SetError(ctx, std::string("iRVZ: ") + (detail && *detail ? detail : irvz_error_string(rc)));
+	}
+	return false;
+}
+
+void IrvzOptions(Format target, const Settings &s, irvz_compress_options *o) {
+	const irvz_format fmt = target == Format::WIA ? IRVZ_FORMAT_WIA : IRVZ_FORMAT_RVZ;
+	irvz_compress_options_init(o, fmt);
+	o->format = fmt;
+	o->compression = (irvz_compression)s.rvz.EffectiveMethod(target);
+	o->level = s.rvz.EffectiveLevel(target);
+	o->chunk_size = s.rvz.EffectiveChunk(target);
+	o->threads = (int)s.engine.threads;
+}
+
 }  // namespace
 
 // ---- Operations -------------------------------------------------------------------------------
@@ -329,6 +386,12 @@ bool CompressFile(const std::string &iso, Format target, const Settings &s, cons
 		if (!PbpOptions(s, &o, &png, ctx))
 			return false;
 		return job.Result(ipbp_iso_to_pbp(job.job, iso.c_str(), out.c_str(), &o));
+	}
+	case Format::WIA:
+	case Format::RVZ: {
+		irvz_compress_options o;
+		IrvzOptions(target, s, &o);
+		return IrvzResult(irvz_compress_file(iso.c_str(), out.c_str(), &o, &IrvzProgress, &ctx), ctx);
 	}
 	default:
 		SetError(ctx, Fmt("can't compress to %s", FormatName(target)));
@@ -368,6 +431,15 @@ bool CompressImage(ImageReader &iso, Format target, const Settings &s, const std
 		ipbp_reader r{ &box, iso.Size(), &PbpRead };
 		return job.Result(ipbp_iso_to_pbp_reader(job.job, &r, out.c_str(), &o));
 	}
+	case Format::WIA:
+	case Format::RVZ: {
+		irvz_compress_options o;
+		IrvzOptions(target, s, &o);
+		irvz_reader r{ &box, iso.Size(), &IrvzRead };
+		FileWriter fw(out);
+		irvz_writer w{ &fw, &IrvzBegin, &IrvzWrite, &IrvzFinish };
+		return IrvzResult(irvz_compress(&r, &w, &o, &IrvzProgress, &ctx), ctx, &fw);
+	}
 	default:
 		SetError(ctx, Fmt("can't compress to %s", FormatName(target)));
 		return false;
@@ -399,6 +471,9 @@ bool DecompressToFile(const std::string &in, Format format, const Settings &s, c
 		FileWriter w(iso);
 		return DecompressToWriter(in, format, s, w, trimPbp, ctx);
 	}
+	case Format::WIA:
+	case Format::RVZ:
+		return IrvzResult(irvz_extract_file(in.c_str(), iso.c_str(), (int)s.engine.threads, &IrvzProgress, &ctx), ctx);
 	default:
 		SetError(ctx, Fmt("can't extract %s", FormatName(format)));
 		return false;
@@ -465,6 +540,16 @@ bool DecompressToWriter(const std::string &in, Format format, const Settings &s,
 				ctx.progress((double)(pos + n) / (double)size);
 		}
 		return w.Finish(size);
+	}
+	case Format::WIA:
+	case Format::RVZ: {
+		irvz_file *f = nullptr;
+		if (irvz_open(in.c_str(), &f) != IRVZ_OK)
+			return IrvzResult(IRVZ_ERR_OPEN, ctx);
+		irvz_writer iw{ &w, &IrvzBegin, &IrvzWrite, &IrvzFinish };
+		int rc = irvz_extract(f, &iw, (int)s.engine.threads, &IrvzProgress, &ctx);
+		irvz_close(f);
+		return IrvzResult(rc, ctx, &w);
 	}
 	default:
 		SetError(ctx, Fmt("can't extract %s", FormatName(format)));
@@ -631,6 +716,10 @@ void RunJob(Job &job) {
 		return finish(JobState::Failed, "format not supported by this build");
 	if (S == Format::ISO && T == Format::ISO)
 		return finish(JobState::Skipped, "already an ISO");
+	// Formats that only hold some platforms' discs (RVZ/WIA: GameCube and Wii; PBP: PSP).
+	ImageInfo info = InspectImage(in.path);
+	if (std::string why = TargetRejects(T, info.platform); !why.empty())
+		return finish(JobState::Skipped, why);
 
 	// Where it goes.
 	std::string final = PlanOutputPath(in, T, s);
@@ -668,7 +757,6 @@ void RunJob(Job &job) {
 	RemoveFile(part);
 
 	// Rough free space check (the output is at most about the ISO's size).
-	ImageInfo info = InspectImage(in.path);
 	res.isoSize = info.isoSize;
 	uint64_t need = T == Format::ISO ? info.isoSize : info.isoSize / 2;
 	uint64_t freeSpace = FreeDiskSpace(final);

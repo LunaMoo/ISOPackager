@@ -241,6 +241,101 @@ int main(int argc, char **argv) {
 		CHECK(!fs::exists(root / "cancel" / "Test Game.pbp.part"), "partial output left behind");
 	}
 
+	// GameCube disc: RVZ and WIA with several methods, back to ISO byte for byte, repacks
+	// through RAM to and from CHD, and the platform rules.
+	{
+		std::vector<uint8_t> gc = testiso::MakeGameCubeDisc(8);
+		const std::string gcPath = PathU8(srcDir / "GC Game.iso");
+		{
+			File f;
+			CHECK(f.Open(gcPath, File::Write) && f.WriteAt(0, gc.data(), gc.size()), "writing the GameCube disc");
+		}
+		ImageInfo gi = InspectImage(gcPath);
+		CHECK(gi.format == Format::ISO && gi.platform == Platform::GameCube && gi.discId == "GTST01" && gi.title == "ISOPackager GC Test",
+			"GameCube detection: %s %s '%s' '%s'", FormatName(gi.format), PlatformLabel(gi.platform), gi.discId.c_str(), gi.title.c_str());
+
+		struct R {
+			Format f;
+			const char *label;
+			Settings s;
+		};
+		std::vector<R> rv;
+		auto addr = [&](Format f, const char *label, auto tweak) {
+			Settings s = base;
+			tweak(s);
+			rv.push_back({ f, label, s });
+		};
+		addr(Format::RVZ, "rvz default (lzma2)", [](Settings &) {});
+		addr(Format::RVZ, "rvz zstd 19 256K", [](Settings &s) {
+			s.rvz.useDefault = false;
+			s.rvz.method = RVZ_ZSTD;
+			s.rvz.level = 19;
+			s.rvz.chunk = 256 << 10;
+		});
+		addr(Format::RVZ, "rvz bzip2 2M", [](Settings &s) {
+			s.rvz.useDefault = false;
+			s.rvz.method = RVZ_BZIP2;
+			s.rvz.chunk = 2 << 20;
+		});
+		addr(Format::WIA, "wia default (lzma2)", [](Settings &) {});
+		addr(Format::WIA, "wia purge", [](Settings &s) {
+			s.rvz.useDefault = false;
+			s.rvz.method = RVZ_PURGE;
+		});
+		addr(Format::WIA, "wia lzma 4M", [](Settings &s) {
+			s.rvz.useDefault = false;
+			s.rvz.method = RVZ_LZMA;
+			s.rvz.level = 9;
+			s.rvz.chunk = 4 << 20;
+		});
+		CHECK(base.rvz.EffectiveMethod(Format::RVZ) == RVZ_LZMA2 && base.rvz.EffectiveChunk(Format::RVZ) == (128u << 10) &&
+				  base.rvz.EffectiveChunk(Format::WIA) == (2u << 20),
+			"RVZ default isn't LZMA2 / 128K (WIA 2M)");
+		std::vector<std::string> rvOut;
+		for (size_t i = 0; i < rv.size(); ++i) {
+			JobResult r = Convert(gcPath, rv[i].f, rv[i].s, PathU8(root / Fmt("rvz%zu", i)));
+			CHECK(r.state == JobState::Done && r.verify == "OK", "GC -> %s: %s %s / %s", rv[i].label, JobStateName(r.state), r.message.c_str(),
+				r.verify.c_str());
+			printf("  GC  -> %-28s %10llu bytes (%5.1f%%) %s\n", rv[i].label, (unsigned long long)r.outputSize, 100.0 * r.outputSize / gc.size(),
+				r.verify.c_str());
+			rvOut.push_back(r.state == JobState::Done ? r.outputPath : "");
+			if (r.state != JobState::Done)
+				continue;
+			ImageInfo oi = InspectImage(r.outputPath);
+			CHECK(oi.format == rv[i].f && oi.platform == Platform::GameCube && oi.discId == "GTST01" && oi.isoSize == gc.size(),
+				"%s info: %s %s %s %llu (%s)", rv[i].label, FormatName(oi.format), PlatformLabel(oi.platform), oi.discId.c_str(),
+				(unsigned long long)oi.isoSize, oi.detail.c_str());
+			JobResult x = Convert(r.outputPath, Format::ISO, rv[i].s, PathU8(root / Fmt("rvzback%zu", i)));
+			std::string why;
+			CHECK(x.state == JobState::Done && SameBytes(x.outputPath, gc, &why), "%s -> ISO: %s %s", rv[i].label, x.message.c_str(), why.c_str());
+		}
+		// RVZ -> CHD through RAM and through a temp ISO, then CHD -> WIA, back to ISO.
+		for (int viaRam = 1; viaRam >= 0 && !rvOut[0].empty(); --viaRam) {
+			Settings s = base;
+			s.engine.repackInRam = viaRam != 0;
+			JobResult c = Convert(rvOut[0], Format::CHD, s, PathU8(root / Fmt("rvzchd%d", viaRam)));
+			CHECK(c.state == JobState::Done && c.verify == "OK" && (viaRam ? c.viaRam : c.viaTempFile), "RVZ -> CHD (%s): %s %s",
+				viaRam ? "RAM" : "temp", c.message.c_str(), c.verify.c_str());
+			if (c.state != JobState::Done)
+				continue;
+			JobResult w = Convert(c.outputPath, Format::WIA, s, PathU8(root / Fmt("chdwia%d", viaRam)));
+			CHECK(w.state == JobState::Done && w.verify == "OK", "CHD -> WIA: %s %s", w.message.c_str(), w.verify.c_str());
+			if (w.state == JobState::Done) {
+				JobResult x = Convert(w.outputPath, Format::ISO, s, PathU8(root / Fmt("chdwiaback%d", viaRam)));
+				std::string why;
+				CHECK(x.state == JobState::Done && SameBytes(x.outputPath, gc, &why), "WIA (from CHD) -> ISO: %s", why.c_str());
+			}
+		}
+		// Platform rules: a PSP game can't go to RVZ, a GameCube disc can't go to PBP.
+		JobResult p1 = Convert(isoPath, Format::RVZ, base, PathU8(root / "pspRvz"));
+		CHECK(p1.state == JobState::Skipped && p1.message.find("GameCube") != std::string::npos, "PSP -> RVZ: %s %s", JobStateName(p1.state),
+			p1.message.c_str());
+		JobResult p2 = Convert(gcPath, Format::PBP, base, PathU8(root / "gcPbp"));
+		CHECK(p2.state == JobState::Skipped && p2.message.find("PSP") != std::string::npos, "GC -> PBP: %s %s", JobStateName(p2.state),
+			p2.message.c_str());
+		CHECK(!fs::exists(root / "pspRvz") && !fs::exists(root / "gcPbp"), "skipped jobs created output folders");
+	}
+
 	// Benchmark entries survive a save / load (the GUI's list lives in the settings file).
 	{
 		std::vector<BenchCase> cases;
@@ -258,6 +353,18 @@ int main(int argc, char **argv) {
 #endif
 		cases.push_back(MakeChdCase("lzma+zstd", 8192));
 		cases.push_back(MakePbpCase(2));
+		cases.push_back(MakeRvzCase(Format::RVZ, RvzSettings()));
+		{
+			RvzSettings z;
+			z.useDefault = false;
+			z.method = RVZ_ZSTD;
+			z.level = -3;
+			z.chunk = 64 << 10;
+			cases.push_back(MakeRvzCase(Format::RVZ, z));
+			z.method = RVZ_PURGE;
+			z.chunk = 4 << 20;
+			cases.push_back(MakeRvzCase(Format::WIA, z));
+		}
 		Settings s;
 		s.benchCases.clear();
 		for (auto &bc : cases)
@@ -271,7 +378,7 @@ int main(int argc, char **argv) {
 			BenchCase p;
 			CHECK(ParseBenchCase(back.benchCases[i], &p), "parse %s", back.benchCases[i].c_str());
 			CHECK(p.format == cases[i].format && SerializeBenchCase(p) == SerializeBenchCase(cases[i]) &&
-					  p.cso.Flags(p.format) == cases[i].cso.Flags(cases[i].format) && p.cso.EffectiveBlockSize(p.format) == cases[i].cso.EffectiveBlockSize(cases[i].format),
+					  p.cso.Flags(p.format) == cases[i].cso.Flags(cases[i].format) && p.rvz.Describe(p.format) == cases[i].rvz.Describe(cases[i].format) && p.cso.EffectiveBlockSize(p.format) == cases[i].cso.EffectiveBlockSize(cases[i].format),
 				"bench case %zu changed: %s", i, back.benchCases[i].c_str());
 		}
 		// Removing them all must stick (not come back as the defaults).
