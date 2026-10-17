@@ -1,0 +1,105 @@
+name: More platforms
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android (arm64, armv7, x86_64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build APK
+        working-directory: android
+        run: |
+          set -o pipefail
+          gradle --no-daemon assembleRelease 2>&1 | tee build.log || { grep -E "error:|FAILED|What went wrong" -A3 build.log | head -40 | sed 's/^/::error::/'; exit 1; }
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ISOPackager-android
+          path: android/app/build/outputs/apk/release/*.apk
+
+  ios:
+    name: iOS (arm64, unsigned)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake -S . -B build -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --target isopackager -- CODE_SIGNING_ALLOWED=NO -quiet 2>&1 | tee build.log || { grep -E "error:" build.log | head -30 | sed 's/^/::error::/'; exit 1; }
+      - name: Package (unsigned .ipa)
+        run: |
+          APP=$(find build -name 'ISOPackager.app' -type d | head -1)
+          mkdir -p Payload && cp -R "$APP" Payload/ && zip -qr ISOPackager-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ISOPackager-ios-unsigned
+          path: ISOPackager-unsigned.ipa
+
+  freebsd:
+    name: FreeBSD 14
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Build and test in a FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '14.3'
+          usesh: true
+          prepare: pkg install -y cmake ninja pkgconf libX11 libXext libXrandr libXcursor libXi libXScrnSaver libXfixes
+          run: |
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+            cmake --build build --parallel 4
+            build/isopk_selftest /tmp/isopk_selftest
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ISOPackager-freebsd-x64
+          path: |
+            build/isopackager-cli
+            build/isopackager
+
+  uwp:
+    name: UWP (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64 -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path configure.log -Pattern 'CMake Error|error' -Context 0,3 | Select-Object -First 15 | ForEach-Object { Write-Output "::error::$($_.Line) $($_.Context.PostContext -join ' ')" }
+            exit 1
+          }
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target isopackager --parallel -- /nologo /v:minimal /p:AppxPackageSigningEnabled=false 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path build.log -Pattern ': (fatal )?error ' | Select-Object -First 25 | ForEach-Object { Write-Output "::error::$($_.Line)" }
+            exit 1
+          }
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ISOPackager-uwp-x64
+          path: build/Release
