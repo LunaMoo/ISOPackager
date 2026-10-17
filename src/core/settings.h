@@ -123,10 +123,11 @@ std::vector<std::string> DefaultBenchCases();
 
 struct Settings {
 	Format target = FormatAvailable(Format::CSO) ? Format::CSO : Format::CHD;
-	CsoSettings cso;
+	// Each container has its own settings.
+	CsoSettings cso, zso, cso2, dax;
 	ChdSettings chd;
 	PbpSettings pbp;
-	RvzSettings rvz;
+	RvzSettings rvz, wia;
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders
@@ -134,6 +135,12 @@ struct Settings {
 	std::vector<std::string> benchCases = DefaultBenchCases();  // serialised BenchCase list (bench.h)
 	int uiTheme = 0;            // 0 dark, 1 light, 2 classic
 	float uiScale = 1.0f;       // on top of the display's DPI scale
+
+	// The settings of an mCSO container (CSO, ZSO, CSO v2, DAX) or an iRVZ one (RVZ, WIA).
+	CsoSettings &Cso(Format f);
+	const CsoSettings &Cso(Format f) const;
+	RvzSettings &Rvz(Format f);
+	const RvzSettings &Rvz(Format f) const;
 
 	bool Load(const std::string &path);
 	bool Save(const std::string &path) const;

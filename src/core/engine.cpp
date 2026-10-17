@@ -165,10 +165,11 @@ bool McsoResult(int rc, const char *err, OpContext &ctx) {
 
 void McsoOptions(Format target, const Settings &s, maxcso_options *o) {
 	maxcso_options_init(o, MAXCSO_MODE_STANDARD);
-	o->flags = s.cso.Flags(target);
-	o->block_size = s.cso.EffectiveBlockSize(target);
-	o->zopfli_split_max = s.cso.zopfliSplits;
-	o->precheck_percent = s.cso.precheck;
+	const CsoSettings &c = s.Cso(target);
+	o->flags = c.Flags(target);
+	o->block_size = c.EffectiveBlockSize(target);
+	o->zopfli_split_max = c.zopfliSplits;
+	o->precheck_percent = c.precheck;
 }
 #endif
 
@@ -349,9 +350,10 @@ void IrvzOptions(Format target, const Settings &s, irvz_compress_options *o) {
 	const irvz_format fmt = target == Format::WIA ? IRVZ_FORMAT_WIA : IRVZ_FORMAT_RVZ;
 	irvz_compress_options_init(o, fmt);
 	o->format = fmt;
-	o->compression = (irvz_compression)s.rvz.EffectiveMethod(target);
-	o->level = s.rvz.EffectiveLevel(target);
-	o->chunk_size = s.rvz.EffectiveChunk(target);
+	const RvzSettings &r = s.Rvz(target);
+	o->compression = (irvz_compression)r.EffectiveMethod(target);
+	o->level = r.EffectiveLevel(target);
+	o->chunk_size = r.EffectiveChunk(target);
 	o->threads = (int)s.engine.threads;
 }
 

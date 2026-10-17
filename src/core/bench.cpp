@@ -457,8 +457,10 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 				continue;
 			}
 			Settings s = base;
-			s.cso = bc.cso;
-			s.rvz = bc.rvz;
+			if (IsMcsoFormat(bc.format))
+				s.Cso(bc.format) = bc.cso;
+			if (IsIrvzFormat(bc.format))
+				s.Rvz(bc.format) = bc.rvz;
 			s.chd = bc.chd;
 			s.pbp = bc.pbp;
 			s.pbp.verifyMacs = true;

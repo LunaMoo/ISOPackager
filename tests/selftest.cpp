@@ -117,12 +117,12 @@ int main(int argc, char **argv) {
 	});
 	add(Format::ZSO, "zso", [](Settings &) {});
 	add(Format::CSO2, "cso2 fast", [](Settings &s) {
-		s.cso.useDefault = false;
-		s.cso.preset = CsoPreset::Fast;
+		s.cso2.useDefault = false;
+		s.cso2.preset = CsoPreset::Fast;
 	});
 	add(Format::DAX, "dax fast", [](Settings &s) {
-		s.cso.useDefault = false;
-		s.cso.preset = CsoPreset::Fast;
+		s.dax.useDefault = false;
+		s.dax.preset = CsoPreset::Fast;
 	});
 #endif
 	add(Format::CHD, "chd default", [](Settings &) {});
@@ -279,14 +279,14 @@ int main(int argc, char **argv) {
 		});
 		addr(Format::WIA, "wia default (lzma2)", [](Settings &) {});
 		addr(Format::WIA, "wia purge", [](Settings &s) {
-			s.rvz.useDefault = false;
-			s.rvz.method = RVZ_PURGE;
+			s.wia.useDefault = false;
+			s.wia.method = RVZ_PURGE;
 		});
 		addr(Format::WIA, "wia lzma 4M", [](Settings &s) {
-			s.rvz.useDefault = false;
-			s.rvz.method = RVZ_LZMA;
-			s.rvz.level = 9;
-			s.rvz.chunk = 4 << 20;
+			s.wia.useDefault = false;
+			s.wia.method = RVZ_LZMA;
+			s.wia.level = 9;
+			s.wia.chunk = 4 << 20;
 		});
 		CHECK(base.rvz.EffectiveMethod(Format::RVZ) == RVZ_LZMA2 && base.rvz.EffectiveChunk(Format::RVZ) == (128u << 10) &&
 				  base.rvz.EffectiveChunk(Format::WIA) == (2u << 20),
@@ -334,6 +334,33 @@ int main(int argc, char **argv) {
 		CHECK(p2.state == JobState::Skipped && p2.message.find("PSP") != std::string::npos, "GC -> PBP: %s %s", JobStateName(p2.state),
 			p2.message.c_str());
 		CHECK(!fs::exists(root / "pspRvz") && !fs::exists(root / "gcPbp"), "skipped jobs created output folders");
+	}
+
+	// Each container keeps its own settings through a save / load.
+	{
+		Settings s;
+		s.cso.useDefault = false;
+		s.cso.preset = CsoPreset::Max;
+		s.zso.useDefault = false;
+		s.zso.preset = CsoPreset::Custom;
+		s.zso.lz4Brute = true;
+		s.zso.blockSize = 16384;
+		s.dax.useDefault = false;
+		s.dax.preset = CsoPreset::Fast;
+		s.rvz.useDefault = false;
+		s.rvz.method = RVZ_ZSTD;
+		s.rvz.level = 12;
+		s.wia.useDefault = false;
+		s.wia.method = RVZ_PURGE;
+		s.wia.chunk = 8 << 20;
+		std::string ini = PathU8(root / "containers.ini");
+		CHECK(s.Save(ini), "saving per-container settings");
+		Settings b;
+		CHECK(b.Load(ini), "loading per-container settings");
+		CHECK(b.cso.preset == CsoPreset::Max && !b.cso.useDefault && b.zso.lz4Brute && b.zso.blockSize == 16384 && b.cso2.useDefault &&
+				  b.dax.preset == CsoPreset::Fast && b.rvz.method == RVZ_ZSTD && b.rvz.level == 12 && b.wia.method == RVZ_PURGE &&
+				  b.wia.chunk == (8u << 20),
+			"per-container settings didn't survive a save / load");
 	}
 
 	// Benchmark entries survive a save / load (the GUI's list lives in the settings file).

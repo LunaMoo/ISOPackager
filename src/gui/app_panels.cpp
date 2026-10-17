@@ -18,6 +18,178 @@ static const ImVec4 kOk(0.40f, 0.85f, 0.50f, 1), kWarn(0.98f, 0.75f, 0.30f, 1), 
 
 // ---- Settings ---------------------------------------------------------------------------------
 
+// One mCSO container (CSO, ZSO, CSO v2, DAX): only the options it takes.
+bool App::DrawCsoSection(Format f, const char *header, bool open) {
+	if (!ImGui::CollapsingHeader(header, open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+		return false;
+	const float em = ImGui::GetFontSize(), labelW = em * 12;
+	auto row = [&](const char *label) {
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted(label);
+		ImGui::SameLine(labelW);
+		ImGui::SetNextItemWidth(em * 14);
+	};
+	const bool zso = f == Format::ZSO, v2 = f == Format::CSO2, dax = f == Format::DAX;
+	const bool deflate = !zso, lz4 = zso || v2;
+	bool changed = false;
+	CsoSettings &c = settings_.Cso(f);
+	ImGui::PushID(FormatKey(f));
+	ImGui::Indent();
+	const char *defLabel = zso ? "Default (lz4 HC, 64K blocks)" : dax ? "Default (libdeflate)" : "Default (libdeflate, 64K blocks)";
+	changed |= ImGui::Checkbox(defLabel, &c.useDefault);
+	if (f == Format::CSO)
+		Tip("Fast to compress and quick to read in PPSSPP. Some old PSP custom firmware can't read libdeflate's output; untick to choose methods "
+			"yourself.");
+	else
+		Tip("Untick to choose the methods yourself.");
+	if (!c.useDefault) {
+		row("Preset");
+		int p = (int)c.preset;
+		const char *presets = zso ? "Fast (lz4)\0Standard (lz4 + lz4 HC)\0Maximum (+ lz4 HC brute force)\0Custom\0"
+			: v2 ? "Fast (zlib + lz4)\0Standard (deflate + lz4 HC)\0Maximum (every method)\0Custom\0"
+				 : "Fast (zlib only)\0Standard (zlib + brute force + 7-zip)\0Maximum (+ Zopfli + libdeflate, slow)\0Custom\0";
+		if (ImGui::Combo("##preset", &p, presets)) {
+			c.preset = (CsoPreset)p;
+			changed = true;
+		}
+		if (!dax) {
+			row("Block size");
+			changed |= BlockSizeCombo("##block", &c.blockSize, 2048, 262144, true, "Automatic (2K, 16K above 2 GB)");
+			HelpMarker("Bigger blocks compress better but every read decompresses a whole block. PPSSPP handles any size; real PSPs need 2K.");
+		}
+		if (c.preset == CsoPreset::Custom) {
+			if (deflate) {
+				ImGui::TextDisabled("Deflate methods: every enabled one is tried on each block, the smallest wins");
+				changed |= ImGui::Checkbox("zlib", &c.zlib);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("zlib brute force", &c.zlibBrute);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("7-zip deflate", &c.sevenZip);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("Zopfli", &c.zopfli);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("libdeflate", &c.libdeflate);
+			}
+			if (lz4) {
+				ImGui::TextDisabled(v2 ? "lz4 methods (used where they beat deflate)" : "lz4 methods: the smallest result wins");
+				changed |= ImGui::Checkbox("lz4", &c.lz4);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("lz4 HC", &c.lz4hc);
+				ImGui::SameLine();
+				changed |= ImGui::Checkbox("lz4 HC brute force", &c.lz4Brute);
+			}
+		}
+		if (deflate) {
+			row("Zopfli splits");
+			int sp = (int)c.zopfliSplits;
+			if (ImGui::SliderInt("##splits", &sp, 0, 60, sp == 0 ? "default (15)" : "%d")) {
+				c.zopfliSplits = (uint32_t)sp;
+				changed = true;
+			}
+			HelpMarker("Deflate blocks Zopfli may split each block into. Larger blocks gain from more splits (img_bench set B uses 20).");
+			row("libdeflate pre-check");
+			float pc = (float)c.precheck;
+			if (ImGui::SliderFloat("##precheck", &pc, 0, 100, pc <= 0 ? "off" : "%.0f%%")) {
+				c.precheck = pc < 1 ? 0 : pc;
+				changed = true;
+			}
+			HelpMarker("Skip Zopfli and 7-zip on blocks libdeflate can't get below this share of the block (video, audio): much faster Maximum "
+					   "compression for nearly the same size (img_bench sets C and D use 98%).");
+		}
+		changed |= ImGui::Checkbox("Compress every block, even when it doesn't save space", &c.forceAll);
+	}
+	ImGui::TextDisabled("%s", c.Describe(f).c_str());
+	DrawAddToBenchmark(MakeMcsoCase(f, c), FormatKey(f));
+	ImGui::Unindent();
+	ImGui::PopID();
+	return changed;
+}
+
+// One iRVZ container (RVZ, WIA): only the methods and chunk sizes it takes.
+bool App::DrawRvzSection(Format f, const char *header, bool open) {
+	if (!ImGui::CollapsingHeader(header, open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+		return false;
+	const float em = ImGui::GetFontSize(), labelW = em * 12;
+	auto row = [&](const char *label) {
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted(label);
+		ImGui::SameLine(labelW);
+		ImGui::SetNextItemWidth(em * 14);
+	};
+	const bool wia = f == Format::WIA;
+	bool changed = false;
+	RvzSettings &c = settings_.Rvz(f);
+	ImGui::PushID(FormatKey(f));
+	ImGui::Indent();
+	changed |= ImGui::Checkbox(wia ? "Default (LZMA2 level 5, 2M chunks)" : "Default (LZMA2 level 5, 128K chunks)", &c.useDefault);
+	Tip(wia ? "Untick to choose the method, level and chunk size yourself." : "Small files that Dolphin reads quickly. Untick to choose the method, "
+		"level and chunk size yourself.");
+	if (!c.useDefault) {
+		if (!RvzMethodAllowed(f, c.method)) {
+			c.method = RVZ_LZMA2;
+			changed = true;
+		}
+		row("Method");
+		if (ImGui::BeginCombo("##rvzmethod", RvzMethodName(c.method))) {
+			const char *notes[] = { "store the data as it is", "drops runs of zeros, no compression", "", "", "", "fastest to read" };
+			for (int m = RVZ_NONE; m <= RVZ_ZSTD; ++m) {
+				if (!RvzMethodAllowed(f, m))
+					continue;
+				std::string l = std::string(RvzMethodName(m)) + (notes[m][0] ? std::string("  (") + notes[m] + ")" : std::string());
+				if (ImGui::Selectable(l.c_str(), c.method == m)) {
+					c.method = m;
+					int lo, hi;
+					RvzMethodLevels(m, &lo, &hi);
+					if (lo <= hi)
+						c.level = std::clamp(c.level, lo, hi);
+					changed = true;
+				}
+			}
+			ImGui::EndCombo();
+		}
+		int lo, hi;
+		RvzMethodLevels(c.method, &lo, &hi);
+		if (lo <= hi) {
+			row("Level");
+			if (ImGui::SliderInt("##rvzlevel", &c.level, lo, hi))
+				changed = true;
+			HelpMarker(c.method == RVZ_ZSTD ? "Higher compresses smaller and slower; negative levels trade size for speed."
+											: "Higher compresses smaller and slower.");
+		}
+		row("Chunk size");
+		auto label = [&](uint32_t v) {
+			if (v == 0)
+				return std::string(wia ? "Default (2M)" : "Default (128K)");
+			return v >= (1u << 20) ? Fmt("%uM", v >> 20) : Fmt("%uK", v >> 10);
+		};
+		if (wia && c.chunk && c.chunk % (2u << 20)) {
+			c.chunk = 0;
+			changed = true;
+		}
+		if (ImGui::BeginCombo("##rvzchunk", label(c.chunk).c_str())) {
+			std::vector<uint32_t> sizes = { 0 };
+			if (!wia)
+				for (uint32_t v = 32u << 10; v < (2u << 20); v <<= 1)
+					sizes.push_back(v);
+			for (uint32_t v = 2u << 20; v <= (32u << 20); v <<= 1)
+				sizes.push_back(v);
+			for (uint32_t v : sizes)
+				if (ImGui::Selectable(label(v).c_str(), c.chunk == v)) {
+					c.chunk = v;
+					changed = true;
+				}
+			ImGui::EndCombo();
+		}
+		HelpMarker(wia ? "WIA chunks are multiples of 2M. Bigger chunks compress better; every read decompresses a whole chunk."
+					   : "Bigger chunks compress better; every read decompresses a whole chunk.");
+	}
+	ImGui::TextDisabled("%s", c.Describe(f).c_str());
+	DrawAddToBenchmark(MakeRvzCase(f, c), FormatKey(f));
+	ImGui::Unindent();
+	ImGui::PopID();
+	return changed;
+}
+
 void App::DrawSettings() {
 	bool changed = false;
 	const float em = ImGui::GetFontSize();
@@ -109,77 +281,9 @@ void App::DrawSettings() {
 		ImGui::Unindent();
 	}
 
-	// --- CSO family
 #ifdef ISOPK_WITH_CSO
-	if (ImGui::CollapsingHeader("CSO / ZSO / CSO v2 / DAX (maxcso)", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Indent();
-		CsoSettings &c = settings_.cso;
-		changed |= ImGui::Checkbox("Default (libdeflate, 64K blocks)", &c.useDefault);
-		Tip("Fast to compress and quick to read in PPSSPP. ZSO uses lz4 HC instead (lz4 has no libdeflate). "
-			"Some old PSP custom firmware can't read libdeflate's CSO output; untick to choose methods yourself.");
-		if (!c.useDefault) {
-			row("Preset");
-			int p = (int)c.preset;
-			if (ImGui::Combo("##preset", &p, "Fast (zlib only)\0Standard (zlib + brute force + 7-zip)\0Maximum (+ Zopfli + libdeflate, slow)\0Custom\0")) {
-				c.preset = (CsoPreset)p;
-				changed = true;
-			}
-			row("Block size");
-			changed |= BlockSizeCombo("##block", &c.blockSize, 2048, 262144, true, "Automatic (2K, 16K above 2 GB)");
-			HelpMarker("Bigger blocks compress better but every read decompresses a whole block. PPSSPP handles any size; real PSPs need 2K.");
-			if (c.preset == CsoPreset::Custom) {
-				ImGui::TextDisabled("Deflate methods (CSO, CSO v2, DAX): every enabled method is tried on each block, the smallest wins");
-				changed |= ImGui::Checkbox("zlib", &c.zlib);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("zlib brute force", &c.zlibBrute);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("7-zip deflate", &c.sevenZip);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("Zopfli", &c.zopfli);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("libdeflate", &c.libdeflate);
-				Tip("Some old PSP custom firmware can't read libdeflate's output in CSO v1.");
-				ImGui::TextDisabled("lz4 methods (ZSO, CSO v2)");
-				changed |= ImGui::Checkbox("lz4", &c.lz4);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("lz4 HC", &c.lz4hc);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("lz4 HC brute force", &c.lz4Brute);
-			}
-			row("Zopfli splits");
-			int sp = (int)c.zopfliSplits;
-			if (ImGui::SliderInt("##splits", &sp, 0, 60, sp == 0 ? "default (15)" : "%d")) {
-				c.zopfliSplits = (uint32_t)sp;
-				changed = true;
-			}
-			HelpMarker("Deflate blocks Zopfli may split each CSO block into. Larger CSO blocks gain from more splits (img_bench set B uses 20).");
-			row("libdeflate pre-check");
-			float pc = (float)c.precheck;
-			if (ImGui::SliderFloat("##precheck", &pc, 0, 100, pc <= 0 ? "off" : "%.0f%%")) {
-				c.precheck = pc < 1 ? 0 : pc;
-				changed = true;
-			}
-			HelpMarker("Skip Zopfli and 7-zip on blocks libdeflate can't get below this share of the block (video, audio): much faster Maximum "
-					   "compression for nearly the same size (img_bench sets C and D use 98%).");
-			changed |= ImGui::Checkbox("Compress every block, even when it doesn't save space", &c.forceAll);
-		}
-		ImGui::TextDisabled("CSO: %s   ZSO: %s", c.Describe(Format::CSO).c_str(), c.Describe(Format::ZSO).c_str());
-		DrawAddToBenchmark(MakeMcsoCase(benchAddCsoFormat_, c), "cso", [&] {
-			ImGui::SameLine();
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted("as");
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(em * 6.5f);
-			if (ImGui::BeginCombo("##benchfmt", FormatName(benchAddCsoFormat_))) {
-				for (Format f : { Format::CSO, Format::ZSO, Format::CSO2, Format::DAX })
-					if (ImGui::Selectable(FormatName(f), f == benchAddCsoFormat_))
-						benchAddCsoFormat_ = f;
-				ImGui::EndCombo();
-			}
-			Tip("Which format the benchmark should compress with these settings.");
-		});
-		ImGui::Unindent();
-	}
+	changed |= DrawCsoSection(Format::CSO, "CSO (maxcso)", true);
+	changed |= DrawCsoSection(Format::ZSO, "ZSO (maxcso)", true);
 #endif
 
 	// --- CHD
@@ -276,75 +380,12 @@ void App::DrawSettings() {
 		ImGui::Unindent();
 	}
 
-	// --- RVZ / WIA
-	if (ImGui::CollapsingHeader("RVZ / WIA (iRVZ, GameCube and Wii)", ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::Indent();
-		RvzSettings &c = settings_.rvz;
-		changed |= ImGui::Checkbox("Default (LZMA2 level 5; chunks: RVZ 128K, WIA 2M)", &c.useDefault);
-		Tip("Small files that Dolphin reads quickly. Untick to choose the method, level and chunk size yourself.");
-		if (!c.useDefault) {
-			row("Method");
-			if (ImGui::BeginCombo("##rvzmethod", RvzMethodName(c.method))) {
-				const char *notes[] = { "store the data as it is", "WIA only: drops runs of zeros", "", "", "Dolphin's LZMA2", "RVZ only: fastest to read" };
-				for (int m = RVZ_NONE; m <= RVZ_ZSTD; ++m) {
-					std::string l = std::string(RvzMethodName(m)) + (notes[m][0] ? std::string("  (") + notes[m] + ")" : std::string());
-					if (ImGui::Selectable(l.c_str(), c.method == m)) {
-						c.method = m;
-						int lo, hi;
-						RvzMethodLevels(m, &lo, &hi);
-						if (lo <= hi)
-							c.level = std::clamp(c.level, lo, hi);
-						changed = true;
-					}
-				}
-				ImGui::EndCombo();
-			}
-			int lo, hi;
-			RvzMethodLevels(c.method, &lo, &hi);
-			if (lo <= hi) {
-				row("Level");
-				if (ImGui::SliderInt("##rvzlevel", &c.level, lo, hi))
-					changed = true;
-				HelpMarker("Higher compresses smaller and slower. zstd's negative levels trade size for speed.");
-			}
-			row("Chunk size");
-			{
-				auto label = [](uint32_t v) {
-					return v == 0 ? std::string("Format default (RVZ 128K, WIA 2M)") : v >= (1u << 20) ? Fmt("%uM", v >> 20) : Fmt("%uK", v >> 10);
-				};
-				if (ImGui::BeginCombo("##rvzchunk", label(c.chunk).c_str())) {
-					const uint32_t sizes[] = { 0, 32u << 10, 64u << 10, 128u << 10, 256u << 10, 512u << 10, 1u << 20, 2u << 20, 4u << 20, 8u << 20,
-						16u << 20, 32u << 20 };
-					for (uint32_t v : sizes) {
-						std::string l = label(v) + (v && v < (2u << 20) ? "  (RVZ only)" : "");
-						if (ImGui::Selectable(l.c_str(), c.chunk == v)) {
-							c.chunk = v;
-							changed = true;
-						}
-					}
-					ImGui::EndCombo();
-				}
-				HelpMarker("Bigger chunks compress better; every read decompresses a whole chunk. WIA takes multiples of 2M only.");
-			}
-			if (!RvzMethodAllowed(Format::RVZ, c.method) || !RvzMethodAllowed(Format::WIA, c.method) || (c.chunk && c.chunk < (2u << 20)))
-				ImGui::TextColored(kWarn, "Settings a format can't take are adjusted for it, see below.");
-		}
-		ImGui::TextDisabled("RVZ: %s   WIA: %s", c.Describe(Format::RVZ).c_str(), c.Describe(Format::WIA).c_str());
-		DrawAddToBenchmark(MakeRvzCase(benchAddRvzFormat_, c), "rvz", [&] {
-			ImGui::SameLine();
-			ImGui::AlignTextToFramePadding();
-			ImGui::TextUnformatted("as");
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(em * 6.5f);
-			if (ImGui::BeginCombo("##benchrvzfmt", FormatName(benchAddRvzFormat_))) {
-				for (Format f : { Format::RVZ, Format::WIA })
-					if (ImGui::Selectable(FormatName(f), f == benchAddRvzFormat_))
-						benchAddRvzFormat_ = f;
-				ImGui::EndCombo();
-			}
-		});
-		ImGui::Unindent();
-	}
+	changed |= DrawRvzSection(Format::RVZ, "RVZ (iRVZ, GameCube and Wii)", true);
+	changed |= DrawRvzSection(Format::WIA, "WIA (iRVZ, GameCube and Wii)", false);
+#ifdef ISOPK_WITH_CSO
+	changed |= DrawCsoSection(Format::CSO2, "CSO v2 (maxcso, experimental)", false);
+	changed |= DrawCsoSection(Format::DAX, "DAX (maxcso)", false);
+#endif
 
 	// --- Appearance
 	if (ImGui::CollapsingHeader("Appearance")) {
@@ -534,26 +575,7 @@ void App::DrawBenchmark() {
 	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 	ImGui::TextWrapped("Add methods with \"Add to benchmark\" under each format in Settings.");
 	ImGui::PopStyleColor();
-	if (ImGui::SmallButton("Open Settings"))
-		requestTab_ = 1;
-	ImGui::SameLine();
 	ImGui::BeginDisabled(running);
-#ifdef ISOPK_WITH_CSO
-	if (ImGui::SmallButton("img_bench CSO sets..."))
-		ImGui::OpenPopup("##imgbench");
-	if (ImGui::BeginPopup("##imgbench")) {
-		for (const auto &set : CsoBenchSets()) {
-			std::string l = std::string(set.key) + ": " + set.name;
-			if (ImGui::Selectable(l.c_str())) {
-				BenchCase c;
-				if (MakeCsoCase(set.key, &c))
-					AddToBenchmark(MakeMcsoCase(Format::CSO, c.cso));
-			}
-		}
-		ImGui::EndPopup();
-	}
-	ImGui::SameLine();
-#endif
 	if (ImGui::SmallButton("Defaults")) {
 		benchCases_.clear();
 		for (const std::string &line : DefaultBenchCases()) {

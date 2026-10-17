@@ -272,6 +272,22 @@ const char *ConflictName(Conflict c) {
 	}
 }
 
+CsoSettings &Settings::Cso(Format f) {
+	return f == Format::ZSO ? zso : f == Format::CSO2 ? cso2 : f == Format::DAX ? dax : cso;
+}
+
+const CsoSettings &Settings::Cso(Format f) const {
+	return const_cast<Settings *>(this)->Cso(f);
+}
+
+RvzSettings &Settings::Rvz(Format f) {
+	return f == Format::WIA ? wia : rvz;
+}
+
+const RvzSettings &Settings::Rvz(Format f) const {
+	return const_cast<Settings *>(this)->Rvz(f);
+}
+
 // ---- INI --------------------------------------------------------------------------------------
 
 std::string Settings::DefaultPath() {
@@ -325,24 +341,28 @@ bool Settings::Load(const std::string &path) {
 	str("target", s);
 	if (FormatFromName(s) != Format::Unknown && FormatAvailable(FormatFromName(s)))
 		target = FormatFromName(s);
-	s.clear();
-	str("cso.preset", s);
-	for (CsoPreset p : { CsoPreset::Fast, CsoPreset::Standard, CsoPreset::Max, CsoPreset::Custom })
-		if (s == CsoPresetName(p))
-			cso.preset = p;
-	boolean("cso.default", cso.useDefault);
-	u32("cso.block", cso.blockSize);
-	boolean("cso.zlib", cso.zlib);
-	boolean("cso.zlib_brute", cso.zlibBrute);
-	boolean("cso.7zip", cso.sevenZip);
-	boolean("cso.zopfli", cso.zopfli);
-	boolean("cso.libdeflate", cso.libdeflate);
-	boolean("cso.lz4", cso.lz4);
-	boolean("cso.lz4hc", cso.lz4hc);
-	boolean("cso.lz4_brute", cso.lz4Brute);
-	u32("cso.zopfli_splits", cso.zopfliSplits);
-	dbl("cso.precheck", cso.precheck);
-	boolean("cso.force_all", cso.forceAll);
+	for (Format f : { Format::CSO, Format::ZSO, Format::CSO2, Format::DAX }) {
+		CsoSettings &c = Cso(f);
+		const std::string k = std::string(FormatKey(f)) + ".";
+		s.clear();
+		str((k + "preset").c_str(), s);
+		for (CsoPreset p : { CsoPreset::Fast, CsoPreset::Standard, CsoPreset::Max, CsoPreset::Custom })
+			if (s == CsoPresetName(p))
+				c.preset = p;
+		boolean((k + "default").c_str(), c.useDefault);
+		u32((k + "block").c_str(), c.blockSize);
+		boolean((k + "zlib").c_str(), c.zlib);
+		boolean((k + "zlib_brute").c_str(), c.zlibBrute);
+		boolean((k + "7zip").c_str(), c.sevenZip);
+		boolean((k + "zopfli").c_str(), c.zopfli);
+		boolean((k + "libdeflate").c_str(), c.libdeflate);
+		boolean((k + "lz4").c_str(), c.lz4);
+		boolean((k + "lz4hc").c_str(), c.lz4hc);
+		boolean((k + "lz4_brute").c_str(), c.lz4Brute);
+		u32((k + "zopfli_splits").c_str(), c.zopfliSplits);
+		dbl((k + "precheck").c_str(), c.precheck);
+		boolean((k + "force_all").c_str(), c.forceAll);
+	}
 
 	u32("chd.hunk", chd.hunkBytes);
 	s.clear();
@@ -366,17 +386,19 @@ bool Settings::Load(const std::string &path) {
 	else if (s == "folder")
 		pbp.layout = PbpLayout::Folder;
 
-	boolean("rvz.default", rvz.useDefault);
-	{
+	for (Format f : { Format::RVZ, Format::WIA }) {
+		RvzSettings &r = Rvz(f);
+		const std::string k = std::string(FormatKey(f)) + ".";
+		boolean((k + "default").c_str(), r.useDefault);
 		s.clear();
-		str("rvz.method", s);
+		str((k + "method").c_str(), s);
 		for (int m = RVZ_NONE; m <= RVZ_ZSTD; ++m)
-			if (s == RvzMethodName(m))
-				rvz.method = m;
-		double lvl = rvz.level;
-		dbl("rvz.level", lvl);
-		rvz.level = (int)lvl;
-		u32("rvz.chunk", rvz.chunk);
+			if (s == RvzMethodName(m) && RvzMethodAllowed(f, m))
+				r.method = m;
+		double lvl = r.level;
+		dbl((k + "level").c_str(), lvl);
+		r.level = (int)lvl;
+		u32((k + "chunk").c_str(), r.chunk);
 	}
 	str("out.dir", out.dir);
 	boolean("out.mirror", out.mirrorTree);
@@ -419,15 +441,23 @@ bool Settings::Save(const std::string &path) const {
 	std::string t;
 	t += "# ISOPackager settings\n";
 	t += Fmt("target=%s\n", FormatKey(target));
-	t += Fmt("cso.default=%d\ncso.preset=%s\ncso.block=%u\n", cso.useDefault, CsoPresetName(cso.preset), cso.blockSize);
-	t += Fmt("cso.zlib=%d\ncso.zlib_brute=%d\ncso.7zip=%d\ncso.zopfli=%d\ncso.libdeflate=%d\n", cso.zlib, cso.zlibBrute, cso.sevenZip,
-		cso.zopfli, cso.libdeflate);
-	t += Fmt("cso.lz4=%d\ncso.lz4hc=%d\ncso.lz4_brute=%d\n", cso.lz4, cso.lz4hc, cso.lz4Brute);
-	t += Fmt("cso.zopfli_splits=%u\ncso.precheck=%g\ncso.force_all=%d\n", cso.zopfliSplits, cso.precheck, cso.forceAll);
+	for (Format f : { Format::CSO, Format::ZSO, Format::CSO2, Format::DAX }) {
+		const CsoSettings &c = Cso(f);
+		const char *k = FormatKey(f);
+		t += Fmt("%s.default=%d\n%s.preset=%s\n%s.block=%u\n", k, c.useDefault, k, CsoPresetName(c.preset), k, c.blockSize);
+		t += Fmt("%s.zlib=%d\n%s.zlib_brute=%d\n%s.7zip=%d\n%s.zopfli=%d\n%s.libdeflate=%d\n", k, c.zlib, k, c.zlibBrute, k, c.sevenZip, k,
+			c.zopfli, k, c.libdeflate);
+		t += Fmt("%s.lz4=%d\n%s.lz4hc=%d\n%s.lz4_brute=%d\n", k, c.lz4, k, c.lz4hc, k, c.lz4Brute);
+		t += Fmt("%s.zopfli_splits=%u\n%s.precheck=%g\n%s.force_all=%d\n", k, c.zopfliSplits, k, c.precheck, k, c.forceAll);
+	}
 	t += Fmt("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
 	t += Fmt("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
 		pbp.contentId.c_str(), pbp.startDatPng.c_str(), pbp.trimOnExtract, pbp.verifyMacs, pbp.layout == PbpLayout::File ? "file" : "folder");
-	t += Fmt("rvz.default=%d\nrvz.method=%s\nrvz.level=%d\nrvz.chunk=%u\n", rvz.useDefault, RvzMethodName(rvz.method), rvz.level, rvz.chunk);
+	for (Format f : { Format::RVZ, Format::WIA }) {
+		const RvzSettings &r = Rvz(f);
+		const char *k = FormatKey(f);
+		t += Fmt("%s.default=%d\n%s.method=%s\n%s.level=%d\n%s.chunk=%u\n", k, r.useDefault, k, RvzMethodName(r.method), k, r.level, k, r.chunk);
+	}
 	t += Fmt("out.dir=%s\nout.mirror=%d\nout.conflict=%s\nout.delete_source=%d\n", out.dir.c_str(), out.mirrorTree, ConflictName(out.conflict),
 		out.deleteSource);
 	t += Fmt("engine.verify=%d\nengine.ram_repack=%d\nengine.ram_budget=%llu\nengine.temp_dir=%s\n", engine.verify, engine.repackInRam,

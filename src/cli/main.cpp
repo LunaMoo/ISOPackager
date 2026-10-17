@@ -154,6 +154,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		a.s.target = Settings().target;
 
 	bool methodsGiven = false;
+	bool csoTouched = false, rvzTouched = false;
 	for (int i = 2; i < argc; ++i) {
 		std::string o = argv[i];
 		auto val = [&](std::string &out) {
@@ -224,6 +225,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		} else if (o == "-q" || o == "--quiet") {
 			g_quiet = true;
 		} else if (o == "--preset") {
+			csoTouched = true;
 			if (!val(v))
 				return false;
 			v = ToLower(v);
@@ -238,6 +240,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 				return false;
 			}
 		} else if (o == "--methods") {
+			csoTouched = true;
 			if (!val(v))
 				return false;
 			CsoSettings &c = a.s.cso;
@@ -260,20 +263,24 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 			}
 			methodsGiven = true;
 		} else if (o == "--block") {
+			csoTouched = true;
 			if (!val(v) || !ParseU32Size(v, &a.s.cso.blockSize) ||
 				(a.s.cso.blockSize && (a.s.cso.blockSize < 2048 || a.s.cso.blockSize > 262144 || (a.s.cso.blockSize & (a.s.cso.blockSize - 1))))) {
 				err = "--block must be a power of two from 2K to 256K";
 				return false;
 			}
 		} else if (o == "--splits") {
+			csoTouched = true;
 			if (!val(v))
 				return false;
 			a.s.cso.zopfliSplits = (uint32_t)std::max(0, atoi(v.c_str()));
 		} else if (o == "--precheck") {
+			csoTouched = true;
 			if (!val(v))
 				return false;
 			a.s.cso.precheck = std::clamp(atof(v.c_str()), 0.0, 100.0);
 		} else if (o == "--force-all") {
+			csoTouched = true;
 			a.s.cso.forceAll = true;
 		} else if (o == "--hunk") {
 			if (!val(v) || !ParseU32Size(v, &a.s.chd.hunkBytes) || a.s.chd.hunkBytes % 2048) {
@@ -289,6 +296,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 				return false;
 			}
 		} else if (o == "--rvz-method") {
+			rvzTouched = true;
 			if (!val(v))
 				return false;
 			v = ToLower(v);
@@ -303,11 +311,13 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 			a.s.rvz.useDefault = false;
 			a.s.rvz.method = m;
 		} else if (o == "--rvz-level") {
+			rvzTouched = true;
 			if (!val(v))
 				return false;
 			a.s.rvz.useDefault = false;
 			a.s.rvz.level = atoi(v.c_str());
 		} else if (o == "--rvz-chunk") {
+			rvzTouched = true;
 			if (!val(v) || !ParseU32Size(v, &a.s.rvz.chunk) || a.s.rvz.chunk < (32u << 10)) {
 				err = "bad --rvz-chunk (e.g. 128K, 2M)";
 				return false;
@@ -382,6 +392,11 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		if (!c.blockSize)
 			c.blockSize = CsoSettings::DEFAULT_BLOCK;
 	}
+	// The CSO and RVZ options set up whichever container the conversion (or bench --extra) uses.
+	if (csoTouched)
+		a.s.zso = a.s.cso2 = a.s.dax = a.s.cso;
+	if (rvzTouched)
+		a.s.wia = a.s.rvz;
 	if (a.command == "extract" && a.explicitTarget && a.s.target != Format::ISO) {
 		err = "extract always writes ISO; use convert --to";
 		return false;
@@ -569,14 +584,14 @@ int RunBench(Args &a) {
 	for (const std::string &e : Split(a.extra, ',')) {
 		Format f = FormatFromName(e);
 		if (IsIrvzFormat(f)) {
-			cfg.cases.push_back(MakeRvzCase(f, a.s.rvz));
+			cfg.cases.push_back(MakeRvzCase(f, a.s.Rvz(f)));
 			continue;
 		}
 		if (!IsMcsoFormat(f) || !FormatAvailable(f)) {
 			fprintf(stderr, "--extra takes zso, cso2, dax, cso, rvz, wia\n");
 			return 1;
 		}
-		cfg.cases.push_back(MakeMcsoCase(f, a.s.cso));
+		cfg.cases.push_back(MakeMcsoCase(f, a.s.Cso(f)));
 	}
 	if (!a.noChd) {
 		for (const std::string &codec : Split(a.codecs, ',')) {

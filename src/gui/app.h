@@ -67,6 +67,8 @@ private:
 	void DrawToolbar();
 	void DrawQueue();
 	void DrawSettings();
+	bool DrawCsoSection(Format f, const char *header, bool open);
+	bool DrawRvzSection(Format f, const char *header, bool open);
 	void DrawBenchmark();
 	void DrawLog();
 	void DrawAbout();
@@ -124,8 +126,6 @@ private:
 	// Benchmark.
 	std::vector<InputFile> benchInputs_;
 	std::vector<BenchCase> benchCases_;  // what the benchmark runs; saved in the settings
-	Format benchAddCsoFormat_ = Format::CSO;  // which mCSO format Settings > CSO adds
-	Format benchAddRvzFormat_ = Format::RVZ;  // RVZ or WIA, for Settings > RVZ / WIA
 	std::string benchNotice_;                // "Added ..." under the Add buttons
 	double benchNoticeAt_ = -10;
 	BenchConfig benchCfg_;
