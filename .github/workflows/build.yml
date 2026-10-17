@@ -14,13 +14,25 @@ jobs:
       matrix:
         arch: [x64, ARM64]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DISOPK_BUILD_GUI=OFF
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A ${{ matrix.arch }} -DISOPK_BUILD_GUI=OFF 2>&1 | Tee-Object -FilePath configure.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path configure.log -Pattern 'CMake Error|error' -Context 0,3 | Select-Object -First 15 | ForEach-Object { Write-Output "::error::$($_.Line) $($_.Context.PostContext -join ' ')" }
+            exit 1
+          }
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --parallel -- /nologo /v:minimal 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) {
+            Select-String -Path build.log -Pattern ': (fatal )?error ' | Select-Object -First 25 | ForEach-Object { Write-Output "::error::$($_.Line)" }
+            exit 1
+          }
       - name: Self-test
         if: matrix.arch == 'x64'
         run: build\Release\isopk_selftest.exe "${{ runner.temp }}\isopk_selftest"
@@ -32,7 +44,7 @@ jobs:
           if (Test-Path build\Release\ISOPackager.exe) { Copy-Item build\Release\ISOPackager.exe dist\ }
           if (Test-Path build\Release\isopackager.exe) { Copy-Item build\Release\isopackager.exe dist\ISOPackager.exe }
           Copy-Item README.md dist\
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ISOPackager-windows-${{ matrix.arch }}
           path: dist
@@ -41,7 +53,7 @@ jobs:
     name: Linux
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install Ninja
@@ -52,7 +64,7 @@ jobs:
         run: cmake --build build --parallel
       - name: Self-test
         run: build/isopk_selftest "$RUNNER_TEMP/isopk_selftest"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ISOPackager-linux-x64
           path: build/isopackager-cli
@@ -61,7 +73,7 @@ jobs:
     name: macOS universal
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Configure
@@ -70,7 +82,7 @@ jobs:
         run: cmake --build build --parallel 4
       - name: Self-test
         run: build/isopk_selftest "$RUNNER_TEMP/isopk_selftest"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ISOPackager-macos-universal
           path: build/isopackager-cli
