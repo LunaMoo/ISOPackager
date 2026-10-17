@@ -13,3 +13,6 @@
 [submodule "external/SDL"]
 	path = external/SDL
 	url = https://github.com/libsdl-org/SDL
+[submodule "external/iRVZ"]
+	path = external/iRVZ
+	url = https://github.com/LunaMoo/iRVZ

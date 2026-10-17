@@ -66,7 +66,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 endif()
 
 set(EXT ${CMAKE_CURRENT_SOURCE_DIR}/external)
-foreach(sub maxcso CHDmodern iPBP imgui)
+foreach(sub maxcso CHDmodern iPBP iRVZ imgui)
 	if(NOT EXISTS ${EXT}/${sub}/.git AND NOT EXISTS ${EXT}/${sub}/README.md)
 		message(FATAL_ERROR "external/${sub} is empty: run  git submodule update --init --recursive")
 	endif()
@@ -121,23 +121,26 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# CHDm (CHDmodern)
+# CHDm (CHDmodern) and iRVZ
 #
-# Linking all three libraries into one program brings two copies of some third-party code:
+# Linking the libraries into one program brings several copies of some third-party code:
 #  * zlib: maxcso bundles 1.2.11, CHDmodern 1.3.2. Same API, so CHDmodern uses maxcso's.
-#  * LZMA SDK match finder (LzFind.c): maxcso's 7-zip deflate encoder bundles the 2017 version,
-#    CHDmodern's LZMA codec the 2024 one. They export the same function names (MatchFinder_*)
-#    with different struct layouts, so the linker would silently mix them and corrupt memory.
-#    CHDmodern's copy is built here with those symbols renamed (lzma_rename.h).
+#  * zstd: CHDmodern and iRVZ bundle the same version (1.5.7); iRVZ uses CHDmodern's.
+#  * LZMA SDK: CHDmodern and iRVZ bundle the same 2024 files (iRVZ's copy adds LZMA2), built
+#    once here for both. maxcso's 7-zip deflate encoder bundles the 2017 match finder (LzFind.c)
+#    with the same function names (MatchFinder_*) but different struct layouts, so the linker
+#    would silently mix them and corrupt memory: the 2024 copy is built with those symbols
+#    renamed (lzma_rename.h).
 # ---------------------------------------------------------------------------
-set(LZ ${EXT}/CHDmodern/third_party/lzma/C)
-add_library(isopk_chdm_lzma STATIC ${LZ}/CpuArch.c ${LZ}/LzFind.c ${LZ}/LzFindOpt.c ${LZ}/LzmaDec.c ${LZ}/LzmaEnc.c)
-target_include_directories(isopk_chdm_lzma PUBLIC ${EXT}/CHDmodern/third_party)
-target_compile_definitions(isopk_chdm_lzma PUBLIC Z7_ST)
+set(LZ ${EXT}/iRVZ/third_party/lzma/C)
+add_library(isopk_lzma STATIC ${LZ}/CpuArch.c ${LZ}/LzFind.c ${LZ}/LzFindOpt.c ${LZ}/LzmaDec.c ${LZ}/LzmaEnc.c
+	${LZ}/Lzma2Dec.c ${LZ}/Lzma2Enc.c)
+target_include_directories(isopk_lzma PUBLIC ${EXT}/iRVZ/third_party)
+target_compile_definitions(isopk_lzma PUBLIC Z7_ST)
 if(MSVC)
-	target_compile_options(isopk_chdm_lzma PRIVATE /w "/FI${CMAKE_CURRENT_SOURCE_DIR}/cmake/lzma_rename.h")
+	target_compile_options(isopk_lzma PRIVATE /w "/FI${CMAKE_CURRENT_SOURCE_DIR}/cmake/lzma_rename.h")
 else()
-	target_compile_options(isopk_chdm_lzma PRIVATE -w -include "${CMAKE_CURRENT_SOURCE_DIR}/cmake/lzma_rename.h")
+	target_compile_options(isopk_lzma PRIVATE -w -include "${CMAKE_CURRENT_SOURCE_DIR}/cmake/lzma_rename.h")
 endif()
 
 set(CHDMODERN_SHARED OFF CACHE BOOL "" FORCE)
@@ -145,8 +148,15 @@ set(CHDMODERN_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(CHDMODERN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(CHDMODERN_INSTALL OFF CACHE BOOL "" FORCE)
 set(CHDMODERN_ZLIB_TARGET ${ISOPK_ZLIB} CACHE STRING "" FORCE)
-set(CHDMODERN_LZMA_TARGET isopk_chdm_lzma CACHE STRING "" FORCE)
+set(CHDMODERN_LZMA_TARGET isopk_lzma CACHE STRING "" FORCE)
 add_subdirectory(${EXT}/CHDmodern ${CMAKE_BINARY_DIR}/ext/CHDmodern EXCLUDE_FROM_ALL)
+
+set(IRVZ_SHARED OFF CACHE BOOL "" FORCE)
+set(IRVZ_BUILD_CLI OFF CACHE BOOL "" FORCE)
+set(IRVZ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(IRVZ_ZSTD_TARGET chdm_zstd CACHE STRING "" FORCE)
+set(IRVZ_LZMA_TARGET isopk_lzma CACHE STRING "" FORCE)
+add_subdirectory(${EXT}/iRVZ ${CMAKE_BINARY_DIR}/ext/iRVZ EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
 # iPBP
@@ -177,7 +187,7 @@ target_compile_definitions(isopk_core PUBLIC
 	ISOPK_VERSION="${PROJECT_VERSION}"
 	$<$<BOOL:${ISOPK_WITH_CSO}>:ISOPK_WITH_CSO=1>
 	$<$<BOOL:${WIN32}>:NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE>)
-target_link_libraries(isopk_core PUBLIC chdmodern ipbp ${ISOPK_ZLIB} Threads::Threads)
+target_link_libraries(isopk_core PUBLIC chdmodern ipbp irvz ${ISOPK_ZLIB} Threads::Threads)
 if(ISOPK_WITH_CSO)
 	target_link_libraries(isopk_core PUBLIC mcso mcso_lz4)
 endif()
