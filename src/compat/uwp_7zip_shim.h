@@ -1,6 +1,9 @@
-// Force-included into maxcso's 7-zip code for UWP builds: CharUpperW / CharLowerW (user32, not in
-// the UWP API set) on top of the CRT. 7-zip calls them both on single characters (passed in the
-// pointer, as Win32 allows) and on whole strings.
+// Force-included into maxcso's 7-zip code for UWP builds: the few desktop-only Win32 calls 7-zip's
+// deflate encoder path makes, on top of the CRT.
+//  - CharUpperW / CharLowerW (user32): called both on single characters (passed in the pointer, as
+//    Win32 allows) and on whole strings.
+//  - AreFileApisANSI: only picks the code page for ANSI file names; UWP file APIs are Unicode.
+//  - InitPropVariantFromUInt32: an inline helper from propvarutil.h, hidden from UWP.
 #pragma once
 #if defined(_WIN32)
 #include <windows.h>
@@ -17,5 +20,14 @@ static __inline LPWSTR isopk_CharCase(LPWSTR p, int upper) {
 }
 #define CharUpperW(p) isopk_CharCase((p), 1)
 #define CharLowerW(p) isopk_CharCase((p), 0)
+#define AreFileApisANSI() TRUE
+#ifdef __cplusplus
+#include <propidl.h>
+inline HRESULT InitPropVariantFromUInt32(ULONG value, PROPVARIANT *pv) {
+	pv->vt = VT_UI4;
+	pv->ulVal = value;
+	return S_OK;
+}
+#endif
 #endif
 #endif
