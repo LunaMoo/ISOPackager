@@ -173,6 +173,7 @@ void App::DrawSettings() {
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted("Codecs");
 		ImGui::SameLine(labelW);
+		const float codecX = ImGui::GetCursorPosX();
 		bool def = c.codecs.empty();
 		if (ImGui::Checkbox("chdman default (lzma, zlib, huff, flac)", &def)) {
 			if (def)
@@ -182,12 +183,16 @@ void App::DrawSettings() {
 			changed = true;
 		}
 		if (!def) {
-			ImGui::SameLine(labelW);
-			ImGui::NewLine();
-			ImGui::SameLine(labelW);
+			// Own row, lined up under the default checkbox.
+			ImGui::SetCursorPosX(codecX);
+			bool first = true;
 			for (const std::string &name : ChdCodecChoices()) {
+				if (!first)
+					ImGui::SameLine();
+				first = false;
 				uint32_t cc = FourCC(name.c_str());
 				bool on = std::find(c.codecs.begin(), c.codecs.end(), cc) != c.codecs.end();
+				ImGui::PushID(name.c_str());
 				ImGui::BeginDisabled(!on && c.codecs.size() >= 4);
 				if (ImGui::Checkbox(name.c_str(), &on)) {
 					if (on)
@@ -199,12 +204,10 @@ void App::DrawSettings() {
 					changed = true;
 				}
 				ImGui::EndDisabled();
-				ImGui::SameLine();
+				ImGui::PopID();
 			}
-			ImGui::NewLine();
-			ImGui::Indent(labelW - ImGui::GetStyle().IndentSpacing);
+			ImGui::SetCursorPosX(codecX);
 			ImGui::TextDisabled("Each hunk uses whichever codec makes it smallest. zstd decodes fastest; lzma is smallest. Up to 4.");
-			ImGui::Unindent(labelW - ImGui::GetStyle().IndentSpacing);
 		}
 		ImGui::Unindent();
 	}

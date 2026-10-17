@@ -120,6 +120,12 @@ void App::HandleArgs(const std::vector<std::string> &args) {
 				addTarget_ = f;
 			else
 				Log(LogLevel::Warning, "Unknown format on the command line: " + args[i]);
+		} else if (args[i] == "--tab" && i + 1 < args.size()) {
+			const char *names[] = { "queue", "settings", "benchmark", "log", "about" };
+			std::string t = ToLower(args[++i]);
+			for (int k = 0; k < 5; ++k)
+				if (t == names[k])
+					requestTab_ = k;
 		} else if (args[i] == "--start") {
 			startWhenScanned_ = true;
 		} else if (!args[i].empty() && args[i][0] != '-') {
