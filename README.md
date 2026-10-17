@@ -68,7 +68,7 @@ the fast / standard / max presets.
 | FreeBSD | SDL2 | |
 | Android | SDL2 | asks for "all files access" to reach images on shared storage |
 | iOS | SDL2 | works on the app's Documents folder (Files app sharing enabled) |
-| UWP | SDL2 | CHD, PBP and ISO only (maxcso's libuv and 7-zip code need desktop Win32 APIs); sandboxed file access |
+| UWP | SDL2 | all formats; maxcso runs on uvlite instead of libuv (see below); sandboxed file access |
 
 Every build has the same engine; the CLI is built on desktop platforms.
 
@@ -102,6 +102,16 @@ program. Both are resolved in ISOPackager's own `CMakeLists.txt`, without changi
   CHDmodern's LZMA codec the 2024 one; they export the same `MatchFinder_*` names with different
   struct layouts, so a plain link would silently mix them. CHDmodern's copy is built with those
   symbols renamed (`cmake/lzma_rename.h`).
+
+### uvlite: maxcso without libuv (UWP)
+
+libuv doesn't build for UWP: it uses Win32 desktop APIs for processes, pipes, sockets and the
+console. maxcso uses none of those, only 16 libuv functions (an event loop, a thread pool,
+mutexes and file I/O). `src/compat/uvlite` implements exactly those on APIs UWP allows
+(`CreateFile2`, positional `ReadFile`/`WriteFile`, `std::thread`), and 7-zip's file streams, which
+its deflate encoder doesn't use, are left out. `-DISOPK_CSO_PORTABLE=ON` selects this on any
+platform (it is the default for UWP); CI runs the whole self-test on it, and its CSO/ZSO output
+is byte-identical to the libuv build's.
 
 ## Settings and results
 

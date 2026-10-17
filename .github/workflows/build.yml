@@ -64,6 +64,11 @@ jobs:
         run: cmake --build build --parallel
       - name: Self-test
         run: build/isopk_selftest "$RUNNER_TEMP/isopk_selftest"
+      - name: Self-test on uvlite (the libuv replacement UWP uses)
+        run: |
+          cmake -S . -B build-portable -G Ninja -DCMAKE_BUILD_TYPE=Release -DISOPK_BUILD_GUI=OFF -DISOPK_CSO_PORTABLE=ON
+          cmake --build build-portable --parallel --target isopk_selftest
+          build-portable/isopk_selftest "$RUNNER_TEMP/isopk_selftest_portable"
       - uses: actions/upload-artifact@v5
         with:
           name: ISOPackager-linux-x64
