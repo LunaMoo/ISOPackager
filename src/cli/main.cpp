@@ -146,7 +146,7 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 	if (a.command == "extract")
 		a.s.target = Format::ISO;
 	else if (a.command == "convert" || a.command == "compress")
-		a.s.target = Format::CSO;
+		a.s.target = Settings().target;
 
 	bool methodsGiven = false;
 	for (int i = 2; i < argc; ++i) {

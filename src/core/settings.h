@@ -92,7 +92,7 @@ struct EngineSettings {
 };
 
 struct Settings {
-	Format target = Format::CSO;
+	Format target = FormatAvailable(Format::CSO) ? Format::CSO : Format::CHD;
 	CsoSettings cso;
 	ChdSettings chd;
 	PbpSettings pbp;
