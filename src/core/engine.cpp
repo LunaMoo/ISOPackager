@@ -52,7 +52,7 @@ std::string LibraryVersions() {
 #ifdef ISOPK_WITH_CSO
 	s += Fmt("mCSO %s, ", maxcso_version());
 #endif
-	s += Fmt("CHDmodern %s, iPBP %s", chdm_version(), ipbp_version());
+	s += Fmt("CHDmodern %s, iPBP %s, iRVZ %s", chdm_version(), ipbp_version(), irvz_version());
 	return s;
 }
 

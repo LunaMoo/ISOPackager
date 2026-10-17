@@ -903,6 +903,7 @@ void App::DrawAbout() {
 	ImGui::SeparatorText("Links");
 	const char *links[][2] = { { "ISOPackager", "https://github.com/LunaMoo/ISOPackager" }, { "maxcso (mCSO)", "https://github.com/LunaMoo/maxcso" },
 		{ "CHDmodern", "https://github.com/LunaMoo/CHDmodern" }, { "iPBP", "https://github.com/LunaMoo/iPBP" },
+		{ "iRVZ", "https://github.com/LunaMoo/iRVZ" },
 		{ "Dear ImGui", "https://github.com/ocornut/imgui" } };
 	for (auto &l : links) {
 		if (hooks_.openUrl) {
