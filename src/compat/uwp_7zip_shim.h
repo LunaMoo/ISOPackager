@@ -20,7 +20,7 @@ static __inline LPWSTR isopk_CharCase(LPWSTR p, int upper) {
 }
 #define CharUpperW(p) isopk_CharCase((p), 1)
 #define CharLowerW(p) isopk_CharCase((p), 0)
-#define AreFileApisANSI() TRUE
+static __inline BOOL AreFileApisANSI(void) { return TRUE; }  // a function: 7-zip calls ::AreFileApisANSI()
 #ifdef __cplusplus
 #include <propidl.h>
 inline HRESULT InitPropVariantFromUInt32(ULONG value, PROPVARIANT *pv) {
