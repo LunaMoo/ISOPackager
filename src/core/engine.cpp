@@ -624,7 +624,7 @@ void RunJob(Job &job) {
 	};
 
 	Format S = in.format == Format::Unknown ? DetectFormat(in.path) : in.format;
-	const Format T = job.target;
+	const Format T = job.target.load();
 	if (S == Format::Unknown)
 		return finish(JobState::Failed, "not a recognised disc image");
 	if (!FormatAvailable(S) || !FormatAvailable(T))

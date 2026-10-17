@@ -69,7 +69,7 @@ struct JobResult {
 
 struct Job {
 	InputFile input;
-	Format target = Format::CSO;
+	std::atomic<Format> target{ Format::CSO };  // may be changed by the UI while queued
 	Settings settings;  // snapshot taken when the job starts
 
 	std::atomic<bool> cancel{ false };

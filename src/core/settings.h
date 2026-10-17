@@ -99,6 +99,9 @@ struct Settings {
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders
+	// GUI only
+	int uiTheme = 0;            // 0 dark, 1 light, 2 classic
+	float uiScale = 1.0f;       // on top of the display's DPI scale
 
 	bool Load(const std::string &path);
 	bool Save(const std::string &path) const;

@@ -290,6 +290,14 @@ bool Settings::Load(const std::string &path) {
 	uns("engine.threads", engine.threads);
 	boolean("engine.low_priority", engine.lowPriority);
 	boolean("recursive", recursive);
+	{
+		uint32_t t = (uint32_t)uiTheme;
+		u32("ui.theme", t);
+		uiTheme = t > 2 ? 0 : (int)t;
+		double sc = uiScale;
+		dbl("ui.scale", sc);
+		uiScale = sc < 0.5 || sc > 4 ? 1.0f : (float)sc;
+	}
 	if (engine.jobs == 0)
 		engine.jobs = 1;
 	return true;
@@ -315,6 +323,7 @@ bool Settings::Save(const std::string &path) const {
 		(unsigned long long)engine.ramBudget, engine.tempDir.c_str());
 	t += Fmt("engine.jobs=%u\nengine.threads=%u\nengine.low_priority=%d\nrecursive=%d\n", engine.jobs, engine.threads, engine.lowPriority,
 		recursive);
+	t += Fmt("ui.theme=%d\nui.scale=%.2f\n", uiTheme, uiScale);
 	File f;
 	if (!f.Open(path, File::Write))
 		return false;
