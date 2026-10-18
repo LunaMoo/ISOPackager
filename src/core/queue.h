@@ -23,6 +23,8 @@ public:
 	Settings CurrentSettings() const;
 
 	std::shared_ptr<Job> Add(const InputFile &input, Format target);
+	// A "Create ZArchive" job (spec.totalSize should be measured already).
+	std::shared_ptr<Job> AddZArchive(const ZarSpec &spec);
 	void Remove(const std::shared_ptr<Job> &job);  // cancels it if running
 	void ClearFinished();
 	void ClearAll();

@@ -121,7 +121,7 @@ void App::HandleArgs(const std::vector<std::string> &args) {
 	for (size_t i = 0; i < args.size(); ++i) {
 		if ((args[i] == "--to" || args[i] == "-f") && i + 1 < args.size()) {
 			Format f = FormatFromName(args[++i]);
-			if (f != Format::Unknown && FormatAvailable(f))
+			if (f != Format::Unknown && f != Format::ZAR && FormatAvailable(f))
 				addTarget_ = f;
 			else
 				Log(LogLevel::Warning, "Unknown format on the command line: " + args[i]);
@@ -131,6 +131,8 @@ void App::HandleArgs(const std::vector<std::string> &args) {
 			for (int k = 0; k < 5; ++k)
 				if (t == names[k])
 					requestTab_ = k;
+		} else if (args[i] == "--zar" && i + 1 < args.size()) {
+			StartCreateZar(args[++i]);
 		} else if (args[i] == "--start") {
 			startWhenScanned_ = true;
 		} else if (!args[i].empty() && args[i][0] != '-') {
@@ -212,6 +214,232 @@ void App::PickFolder(std::function<void(const std::string &)> then) {
 	browser_.Open(FileBrowser::PickFolder, "Choose a folder");
 }
 
+// ---- Create ZArchive --------------------------------------------------------------------------
+
+void App::StartCreateZar(const std::string &folder) {
+	auto open = [this](const std::string &d) {
+		ZarSpec spec;
+		spec.rootDir = d;
+		fs::path p = U8Path(d);
+		if (!p.has_filename())
+			p = p.parent_path();
+		spec.name = PathU8(p.filename());
+		{
+			std::lock_guard<std::mutex> g(scanMutex_);
+			zarDlg_.spec = spec;
+			zarDlg_.size = 0;
+			zarDlg_.error.clear();
+			++zarDlg_.generation;
+		}
+		zarDlg_.requestOpen = true;
+		MeasureZarAsync(spec, false);
+	};
+	if (!folder.empty())
+		open(folder);
+	else
+		PickFolder(open);
+}
+
+void App::MeasureZarAsync(const ZarSpec &spec, bool forQueue) {
+	++scansRunning_;
+	int gen;
+	{
+		std::lock_guard<std::mutex> g(scanMutex_);
+		gen = zarDlg_.generation;
+	}
+	scanThreads_.emplace_back([this, spec, forQueue, gen] {
+		ZarSpec m = spec;
+		std::string err;
+		bool ok = MeasureZarSpec(&m, &err);
+		{
+			std::lock_guard<std::mutex> g(scanMutex_);
+			if (forQueue) {
+				if (ok)
+					zarReady_.push_back(m);
+				else
+					scanWarnings_.push_back(m.name + ": " + err);
+			} else if (gen == zarDlg_.generation) {
+				zarDlg_.size = m.totalSize;
+				zarDlg_.error = ok ? std::string() : err;
+				zarDlg_.measuredGeneration = gen;
+			}
+		}
+		--scansRunning_;
+	});
+}
+
+void App::DrawZarDialog() {
+	if (zarDlg_.requestOpen) {
+		ImGui::OpenPopup("Create ZArchive");
+		zarDlg_.requestOpen = false;
+	}
+	const ImGuiViewport *vp = ImGui::GetMainViewport();
+	ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(std::min(vp->Size.x * 0.9f, ImGui::GetFontSize() * 44), 0), ImGuiCond_Appearing);
+	zarDlg_.open = ImGui::BeginPopupModal("Create ZArchive", nullptr, ImGuiWindowFlags_NoSavedSettings);
+	if (!zarDlg_.open)
+		return;
+	const float em = ImGui::GetFontSize();
+	ZarSpec spec;
+	uint64_t size;
+	std::string error;
+	bool measured;
+	{
+		std::lock_guard<std::mutex> g(scanMutex_);
+		spec = zarDlg_.spec;
+		size = zarDlg_.size;
+		error = zarDlg_.error;
+		measured = zarDlg_.measuredGeneration == zarDlg_.generation;
+	}
+	auto change = [&](const std::function<void(ZarSpec &)> &fn) {
+		ZarSpec copy;
+		{
+			std::lock_guard<std::mutex> g(scanMutex_);
+			fn(zarDlg_.spec);
+			++zarDlg_.generation;
+			copy = zarDlg_.spec;
+		}
+		MeasureZarAsync(copy, false);
+	};
+
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Name");
+	ImGui::SameLine(em * 6);
+	ImGui::SetNextItemWidth(-em * 3);
+	std::string name = spec.name;
+	if (ImGui::IsWindowAppearing())
+		ImGui::SetKeyboardFocusHere();
+	if (InputStringHint("##zarname", "Legend of Heroes - Trails in the Sky", &name)) {
+		std::lock_guard<std::mutex> g(scanMutex_);
+		zarDlg_.spec.name = name;
+	}
+	ImGui::SameLine();
+	ImGui::TextDisabled(".zar");
+
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Folder");
+	ImGui::SameLine(em * 6);
+	if (spec.rootDir.empty())
+		ImGui::TextDisabled("(none)");
+	else
+		ImGui::TextWrapped("%s", spec.rootDir.c_str());
+	Tip("Everything in this folder goes into the archive's root, the way the zarchive tool packs a folder.");
+	ImGui::SetCursorPosX(em * 6);
+	if (ImGui::Button(spec.rootDir.empty() ? "Choose folder..." : "Change folder..."))
+		PickFolder([this](const std::string &d) {
+			{
+				std::lock_guard<std::mutex> g(scanMutex_);
+				const bool wasDefaultName = zarDlg_.spec.name.empty() ||
+					zarDlg_.spec.name == PathU8(U8Path(zarDlg_.spec.rootDir).filename());
+				zarDlg_.spec.rootDir = d;
+				if (wasDefaultName)
+					zarDlg_.spec.name = PathU8(U8Path(d).filename());
+				++zarDlg_.generation;
+			}
+			ZarSpec copy;
+			{
+				std::lock_guard<std::mutex> g(scanMutex_);
+				copy = zarDlg_.spec;
+			}
+			MeasureZarAsync(copy, false);
+		});
+	if (!spec.rootDir.empty()) {
+		ImGui::SameLine();
+		if (ImGui::Button("Don't use a folder"))
+			change([](ZarSpec &z) { z.rootDir.clear(); });
+	}
+
+	ImGui::Spacing();
+	ImGui::AlignTextToFramePadding();
+	ImGui::TextUnformatted("Also add");
+	ImGui::SameLine(em * 6);
+	if (spec.extras.empty())
+		ImGui::TextDisabled("(nothing else: optional)");
+	int removeAt = -1;
+	for (size_t i = 0; i < spec.extras.size(); ++i) {
+		if (i > 0)
+			ImGui::SetCursorPosX(em * 6);
+		ImGui::PushID((int)i);
+		if (ImGui::SmallButton("x"))
+			removeAt = (int)i;
+		ImGui::PopID();
+		ImGui::SameLine();
+		ImGui::TextWrapped("%s", spec.extras[i].c_str());
+	}
+	if (removeAt >= 0)
+		change([removeAt](ZarSpec &z) { z.extras.erase(z.extras.begin() + removeAt); });
+	ImGui::SetCursorPosX(em * 6);
+	auto addExtras = [this](const std::vector<std::string> &paths) {
+		ZarSpec copy;
+		{
+			std::lock_guard<std::mutex> g(scanMutex_);
+			for (const std::string &p : paths)
+				if (std::find(zarDlg_.spec.extras.begin(), zarDlg_.spec.extras.end(), p) == zarDlg_.spec.extras.end() && p != zarDlg_.spec.rootDir)
+					zarDlg_.spec.extras.push_back(p);
+			if (zarDlg_.spec.name.empty() && !zarDlg_.spec.extras.empty())
+				zarDlg_.spec.name = PathU8(U8Path(zarDlg_.spec.extras.front()).stem());
+			++zarDlg_.generation;
+			copy = zarDlg_.spec;
+		}
+		MeasureZarAsync(copy, false);
+	};
+	if (ImGui::Button("Add files and folders...")) {
+		browserThen_ = addExtras;
+		browser_.Open(FileBrowser::PickAny, "Add to the archive: files and folders (each goes to the archive's root under its own name)",
+			spec.SourceDir());
+	}
+	Tip("Discs or DLC folders from elsewhere. Each goes to the archive's root under its own name.");
+	ImGui::SameLine();
+	if (ImGui::Button("Add folder..."))
+		PickFolder([addExtras](const std::string &d) { addExtras({ d }); });
+
+	ImGui::Spacing();
+	ImGui::Separator();
+	if (!error.empty() && measured)
+		ImGui::TextColored(kErr, "%s", error.c_str());
+	else if (!measured)
+		ImGui::TextDisabled("Measuring...");
+	else
+		ImGui::Text("Total %s", HumanBytes(size).c_str());
+	ImGui::TextDisabled("Compression: %s", settings_.zar.Describe().c_str());
+	ImGui::SameLine();
+	if (ImGui::SmallButton("Change...")) {
+		requestTab_ = 1;
+		ImGui::CloseCurrentPopup();
+	}
+	if (!spec.name.empty() && (!spec.rootDir.empty() || !spec.extras.empty())) {
+		ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+		ImGui::TextWrapped("Output: %s", PlanZarOutputPath(spec, settings_).c_str());
+		ImGui::PopStyleColor();
+	}
+
+	const bool ready = !name.empty() && (!spec.rootDir.empty() || !spec.extras.empty()) && (!measured || error.empty());
+	ImGui::BeginDisabled(!ready);
+	const bool keys = !browser_.IsOpen();
+	if (WideButton("Add to queue") || (keys && ready && ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive())) {
+		ZarSpec copy;
+		{
+			std::lock_guard<std::mutex> g(scanMutex_);
+			copy = zarDlg_.spec;
+			copy.name = name;
+		}
+		MeasureZarAsync(copy, true);
+		ImGui::CloseCurrentPopup();
+	}
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	if (WideButton("Cancel") || (keys && ImGui::IsKeyPressed(ImGuiKey_Escape)))
+		ImGui::CloseCurrentPopup();
+
+	// The file browser opens over this dialog (a popup opened outside it would close it).
+	if (browser_.Draw() && browserThen_) {
+		auto then = browserThen_;
+		browserThen_ = nullptr;
+		then(browser_.Result());
+	}
+	ImGui::EndPopup();
+}
+
 std::string App::OutputFolderLabel() const {
 	return settings_.out.dir.empty() ? std::string("Next to each source") : settings_.out.dir;
 }
@@ -236,6 +464,11 @@ void App::Frame() {
 			startWhenScanned_ = false;
 			queue_.Start();
 		}
+		for (const ZarSpec &z : zarReady_) {
+			queue_.AddZArchive(z);
+			Log(LogLevel::Info, Fmt("Queued ZArchive %s (%s)", z.name.c_str(), HumanBytes(z.totalSize).c_str()));
+		}
+		zarReady_.clear();
 		for (const InputFile &f : benchScanned_) {
 			bool dup = false;
 			for (auto &b : benchInputs_)
@@ -319,10 +552,15 @@ void App::DrawToolbar() {
 	ImGui::SameLine();
 	if (ImGui::Button("Apply to queued")) {
 		for (auto &j : queue_.Jobs())
-			if (j->State() == JobState::Queued)
+			if (j->State() == JobState::Queued && !j->zar)
 				j->target = addTarget_;
 	}
 	Tip("Set every image that hasn't started yet to this format.");
+	ImGui::SameLine();
+	if (ImGui::Button("Create ZArchive..."))
+		StartCreateZar();
+	Tip("Pack a folder (several discs, DLC folders...) into one .zar archive. Choose the folder, name the archive, and it's "
+		"added to the queue. Settings > ZArchive sets the compression.");
 
 	ImGui::SameLine();
 	ImGui::TextDisabled("|");
@@ -412,7 +650,7 @@ void App::DrawQueue() {
 		ImVec2 ts = ImGui::CalcTextSize(msg);
 		ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, avail.y * 0.4f));
 		ImGui::TextDisabled("%s", msg);
-		const char *sub = "ISO, CSO, ZSO, CSO v2, DAX, CHD and EBOOT.PBP in, any of them out.";
+		const char *sub = "ISO, CSO, ZSO, CSO v2, DAX, CHD, EBOOT.PBP, RVZ and WIA in, any of them out. Create ZArchive packs a whole folder.";
 		ts = ImGui::CalcTextSize(sub);
 		ImGui::SetCursorPosX((avail.x - ts.x) * 0.5f);
 		ImGui::TextDisabled("%s", sub);
@@ -452,7 +690,8 @@ void App::DrawQueue() {
 		JobState st = j->State();
 		JobResult r = j->Result();
 		ImageMeta meta;
-		{
+		const ZarSpec *zar = j->zar.get();
+		if (!zar) {
 			std::lock_guard<std::mutex> g(metaMutex_);
 			auto it = meta_.find(j->input.path);
 			if (it != meta_.end())
@@ -464,7 +703,7 @@ void App::DrawQueue() {
 		// Image (selectable across the row).
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
-		std::string name = GameName(j->input.path);
+		std::string name = zar ? zar->name : GameName(j->input.path);
 		bool sel = selection_.count(j.get()) != 0;
 		std::string label = name;
 		if (!meta.discId.empty())
@@ -488,9 +727,18 @@ void App::DrawQueue() {
 			}
 		}
 		if (ImGui::BeginItemTooltip()) {
+			if (zar) {
+				ImGui::Text("ZArchive %s.zar", zar->name.c_str());
+				if (!zar->rootDir.empty())
+					ImGui::TextDisabled("Contents of %s", zar->rootDir.c_str());
+				for (const std::string &x : zar->extras)
+					ImGui::TextDisabled("+ %s", x.c_str());
+				ImGui::TextDisabled("%s", j->settings.zar.Describe().c_str());
+			}
 			if (!meta.title.empty())
 				ImGui::Text("%s", meta.title.c_str());
-			ImGui::TextDisabled("%s", j->input.path.c_str());
+			if (!zar)
+				ImGui::TextDisabled("%s", j->input.path.c_str());
 			if (!meta.detail.empty())
 				ImGui::TextDisabled("%s", meta.detail.c_str());
 			if (meta.isoSize)
@@ -509,12 +757,12 @@ void App::DrawQueue() {
 				selection_.clear();
 				selection_.insert(j.get());
 			}
-			if (ImGui::BeginMenu("Convert to", st == JobState::Queued || st == JobState::Failed || st == JobState::Cancelled || st == JobState::Done ||
-					st == JobState::Skipped)) {
+			if (ImGui::BeginMenu("Convert to", !zar && (st == JobState::Queued || st == JobState::Failed || st == JobState::Cancelled || st == JobState::Done ||
+					st == JobState::Skipped))) {
 				for (Format f : OutputFormats()) {
 					if (ImGui::MenuItem(FormatName(f), nullptr, j->target.load() == f)) {
 						for (auto &o : jobs)
-							if (selection_.count(o.get()) && o->State() != JobState::Running) {
+							if (selection_.count(o.get()) && o->State() != JobState::Running && !o->zar) {
 								o->target = f;
 								if (o->State() != JobState::Queued)
 									queue_.Retry(o);
@@ -544,7 +792,10 @@ void App::DrawQueue() {
 
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
-		FormatBadge(j->input.format);
+		if (zar)
+			ImGui::TextDisabled("files");
+		else
+			FormatBadge(j->input.format);
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted(HumanBytes(j->input.size).c_str());
@@ -552,7 +803,7 @@ void App::DrawQueue() {
 		// Target: editable while queued.
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
-		if (st == JobState::Queued) {
+		if (st == JobState::Queued && !zar) {
 			Format t = j->target.load();
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::PushStyleColor(ImGuiCol_Text, FormatColor(t));

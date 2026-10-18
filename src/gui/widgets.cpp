@@ -96,6 +96,7 @@ ImVec4 FormatColor(Format f) {
 	case Format::PBP: return ImVec4(0.96f, 0.42f, 0.45f, 1);
 	case Format::RVZ: return ImVec4(0.30f, 0.85f, 0.85f, 1);
 	case Format::WIA: return ImVec4(0.55f, 0.75f, 0.60f, 1);
+	case Format::ZAR: return ImVec4(0.95f, 0.55f, 0.80f, 1);
 	default: return ImVec4(1, 1, 1, 1);
 	}
 }

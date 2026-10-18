@@ -249,6 +249,17 @@ uint32_t RvzSettings::EffectiveChunk(Format f) const {
 	return (c + twoMB - 1) / twoMB * twoMB;
 }
 
+std::string ZarSettings::Describe() const {
+	std::string s = Fmt("zstd %d", level);
+	if (precheck > 0)
+		s += Fmt(", pre-check %g%%", precheck);
+	if (compressDiscs)
+		s += Fmt(", ISOs to %s first", FormatName(discFormat));
+	if (storeDiscs)
+		s += ", discs stored";
+	return s;
+}
+
 std::string RvzSettings::Describe(Format f) const {
 	const int m = EffectiveMethod(f);
 	std::string s = useDefault ? "default (" : "";
@@ -400,6 +411,19 @@ bool Settings::Load(const std::string &path) {
 		r.level = (int)lvl;
 		u32((k + "chunk").c_str(), r.chunk);
 	}
+	{
+		double v = zar.level;
+		dbl("zar.level", v);
+		zar.level = std::clamp((int)v, 1, 22);
+	}
+	dbl("zar.precheck", zar.precheck);
+	zar.precheck = std::clamp(zar.precheck, 0.0, 100.0);
+	boolean("zar.store_discs", zar.storeDiscs);
+	boolean("zar.compress_discs", zar.compressDiscs);
+	s.clear();
+	str("zar.disc_format", s);
+	if (Format f = FormatFromName(s); f != Format::Unknown && f != Format::ISO && f != Format::ZAR && FormatAvailable(f))
+		zar.discFormat = f;
 	str("out.dir", out.dir);
 	boolean("out.mirror", out.mirrorTree);
 	s.clear();
@@ -458,6 +482,8 @@ bool Settings::Save(const std::string &path) const {
 		const char *k = FormatKey(f);
 		t += Fmt("%s.default=%d\n%s.method=%s\n%s.level=%d\n%s.chunk=%u\n", k, r.useDefault, k, RvzMethodName(r.method), k, r.level, k, r.chunk);
 	}
+	t += Fmt("zar.level=%d\nzar.precheck=%g\nzar.store_discs=%d\nzar.compress_discs=%d\nzar.disc_format=%s\n", zar.level, zar.precheck,
+		zar.storeDiscs, zar.compressDiscs, FormatKey(zar.discFormat));
 	t += Fmt("out.dir=%s\nout.mirror=%d\nout.conflict=%s\nout.delete_source=%d\n", out.dir.c_str(), out.mirrorTree, ConflictName(out.conflict),
 		out.deleteSource);
 	t += Fmt("engine.verify=%d\nengine.ram_repack=%d\nengine.ram_budget=%llu\nengine.temp_dir=%s\n", engine.verify, engine.repackInRam,

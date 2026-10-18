@@ -15,7 +15,10 @@
 #include "core/fileio.h"
 #include "core/queue.h"
 #include "core/util.h"
+#include "core/zar.h"
 #include "test_iso.h"
+
+#include <zarchive/zarchivereader.h>
 
 using namespace isopk;
 
@@ -60,6 +63,55 @@ static JobResult Convert(const std::string &input, Format target, Settings s, co
 	job.settings = s;
 	RunJob(job);
 	return job.Result();
+}
+
+static JobResult MakeZar(const ZarSpec &specIn, Settings s, const std::string &outDir) {
+	ZarSpec spec = specIn;
+	std::string err;
+	CHECK(MeasureZarSpec(&spec, &err), "measure: %s", err.c_str());
+	Job job;
+	job.zar = std::make_shared<const ZarSpec>(spec);
+	job.input.path = spec.Paths().front();
+	job.input.size = spec.totalSize;
+	job.target = Format::ZAR;
+	s.out.dir = outDir;
+	s.out.conflict = Conflict::Overwrite;
+	job.settings = s;
+	RunJob(job);
+	return job.Result();
+}
+
+// Reads one file out of an archive.
+static std::vector<uint8_t> ZarFile(const std::string &zar, const std::string &name, bool *found) {
+	std::unique_ptr<ZArchiveReader> r(ZArchiveReader::OpenFromFile(U8Path(zar)));
+	*found = false;
+	std::vector<uint8_t> out;
+	if (!r)
+		return out;
+	ZArchiveNodeHandle h = r->LookUp(name, true, false);
+	if (h == ZARCHIVE_INVALID_NODE)
+		return out;
+	*found = true;
+	out.resize((size_t)r->GetFileSize(h));
+	if (!out.empty() && r->ReadFromFile(h, 0, out.size(), out.data()) != out.size())
+		out.clear();
+	return out;
+}
+
+static std::vector<uint8_t> ReadAll(const std::string &path) {
+	File f;
+	std::vector<uint8_t> v;
+	if (f.Open(path, File::Read)) {
+		v.resize((size_t)f.Size());
+		if (!v.empty() && !f.ReadExact(0, v.data(), v.size()))
+			v.clear();
+	}
+	return v;
+}
+
+static void WriteAll(const std::string &path, const std::vector<uint8_t> &data) {
+	File f;
+	CHECK(f.Open(path, File::Write) && (data.empty() || f.WriteAt(0, data.data(), data.size())), "writing %s", path.c_str());
 }
 
 int main(int argc, char **argv) {
@@ -419,6 +471,193 @@ int main(int argc, char **argv) {
 				  (def.Flags(Format::CSO) & mcso_flags::NO_ZLIB) == mcso_flags::NO_ZLIB,
 			"CSO default isn't libdeflate 64K");
 #endif
+	}
+
+	// ZArchive: a game folder with a plain ISO, an already compressed disc, a GameCube disc and DLC.
+	{
+		printf("ZArchive\n");
+		fs::path game = root / U8Path("Trails in the Sky");
+		fs::create_directories(game / "DLC" / "ULUS99999-DLC1", ec);
+		fs::create_directories(game / "DLC" / "empty", ec);
+		WriteAll(PathU8(game / "Test Game.iso"), iso);
+		std::vector<uint8_t> csoBytes = outputs.empty() ? std::vector<uint8_t>() : ReadAll(outputs.front());
+		WriteAll(PathU8(game / "Disc 2.cso"), csoBytes);
+		std::vector<uint8_t> gc = testiso::MakeGameCubeDisc(8);
+		WriteAll(PathU8(game / "Bonus GC.iso"), gc);
+		std::vector<uint8_t> dlc;
+		for (int i = 0; dlc.size() < 3000000; ++i) {
+			std::string line = Fmt("DLC item %d texture data PSP_GAME/USRDIR\n", i % 977);
+			dlc.insert(dlc.end(), line.begin(), line.end());
+		}
+		WriteAll(PathU8(game / "DLC" / "ULUS99999-DLC1" / "data.bin"), dlc);
+		WriteAll(PathU8(game / "DLC" / "ULUS99999-DLC1" / "PARAM.SFO"), testiso::MakeSfo("ULUS99999", "DLC"));
+
+		ZarSpec spec;
+		spec.name = "Trails in the Sky";
+		spec.rootDir = PathU8(game);
+		Settings zs = base;
+		zs.zar = ZarSettings();
+
+		auto check = [&](const JobResult &r, const char *label, const std::string &discName, const std::vector<uint8_t> *discBytes,
+						 const char *gcName = "Bonus GC.iso") {
+			CHECK(r.state == JobState::Done, "%s: %s %s", label, JobStateName(r.state), r.message.c_str());
+			if (r.state != JobState::Done)
+				return;
+			CHECK(r.verify == "OK", "%s: verify %s", label, r.verify.c_str());
+			bool found;
+			std::vector<uint8_t> d = ZarFile(r.outputPath, "DLC/ULUS99999-DLC1/data.bin", &found);
+			CHECK(found && d == dlc, "%s: DLC data", label);
+			d = ZarFile(r.outputPath, "Disc 2.cso", &found);
+			CHECK(found && d == csoBytes, "%s: stored CSO", label);
+			d = ZarFile(r.outputPath, gcName, &found);
+			CHECK(found && (strcmp(gcName, "Bonus GC.iso") != 0 || d == gc), "%s: GameCube disc %s", label, gcName);
+			std::unique_ptr<ZArchiveReader> zr(ZArchiveReader::OpenFromFile(U8Path(r.outputPath)));
+			CHECK(zr && zr->LookUp("DLC/empty", false, true) != ZARCHIVE_INVALID_NODE, "%s: empty folder", label);
+			d = ZarFile(r.outputPath, discName, &found);
+			CHECK(found, "%s: %s missing", label, discName.c_str());
+			if (found && discBytes)
+				CHECK(d == *discBytes, "%s: %s content", label, discName.c_str());
+			printf("  %-28s %s -> %s (%.1f%%), %s\n", label, HumanBytes(r.inputSize).c_str(), HumanBytes(r.outputSize).c_str(),
+				100.0 * r.outputSize / std::max<uint64_t>(r.inputSize, 1), r.message.c_str());
+		};
+		// A disc compressed first, taken out of the archive, must extract to the original ISO.
+		auto checkDisc = [&](const JobResult &r, const char *label, const std::string &name, Format f) {
+			if (r.state != JobState::Done)
+				return;
+			bool found;
+			std::vector<uint8_t> d = ZarFile(r.outputPath, name, &found);
+			CHECK(found && !d.empty(), "%s: %s missing", label, name.c_str());
+			CHECK(ZarFile(r.outputPath, "Test Game.iso", &found).empty() && !found, "%s: the ISO is still in", label);
+			const std::string tmp = PathU8(root / ("zar_disc" + std::string(FormatExtension(f))));
+			WriteAll(tmp, d);
+			CHECK(DetectFormat(tmp) == f, "%s: not a %s", label, FormatName(f));
+			OpContext ctx;
+			const std::string back = PathU8(root / "zar_back.iso");
+			CHECK(DecompressToFile(tmp, f, base, back, true, ctx), "%s: extract %s", label, ctx.error.c_str());
+			std::string why;
+			CHECK(SameBytes(back, iso, &why), "%s: %s", label, why.c_str());
+			fs::remove(U8Path(tmp), ec);
+			fs::remove(U8Path(back), ec);
+		};
+
+		const std::string zdir = PathU8(root / "zar");
+		JobResult r = MakeZar(spec, zs, zdir);
+		check(r, "default (zstd 22, pre-check)", "Test Game.iso", &iso);
+		CHECK(r.outputPath == PathU8(U8Path(zdir) / "Trails in the Sky.zar"), "output %s", r.outputPath.c_str());
+
+		Settings st = zs;
+		st.zar.storeDiscs = true;
+		st.zar.level = 3;
+		r = MakeZar(spec, st, zdir);
+		check(r, "discs stored, level 3", "Test Game.iso", &iso);
+		CHECK(r.message.find("3 discs stored") != std::string::npos, "store-only: %s", r.message.c_str());
+
+		std::vector<std::pair<Format, std::string>> firsts;
+#ifdef ISOPK_WITH_CSO
+		firsts.push_back({ Format::CSO, "Test Game.cso" });
+#endif
+		firsts.push_back({ Format::CHD, "Test Game.chd" });
+		firsts.push_back({ Format::PBP, "Test Game.pbp" });
+		for (auto &fp : firsts) {
+			Settings sc = zs;
+			sc.zar.compressDiscs = true;
+			sc.zar.discFormat = fp.first;
+			std::string label = std::string("ISOs to ") + FormatName(fp.first) + " in RAM";
+			r = MakeZar(spec, sc, zdir);
+			// PBP refuses the GameCube disc; the other formats compress it too.
+			const std::string gcName = fp.first == Format::PBP ? std::string("Bonus GC.iso") : "Bonus GC" + std::string(FormatExtension(fp.first));
+			check(r, label.c_str(), fp.second, nullptr, gcName.c_str());
+			checkDisc(r, label.c_str(), fp.second, fp.first);
+			if (fp.first == Format::PBP) {
+				// PBP takes only PSP games: the GameCube disc went in as it was (checked above).
+				CHECK(r.message.find("1 disc compressed first") != std::string::npos, "pbp: %s", r.message.c_str());
+			} else {
+				CHECK(r.message.find("2 discs compressed first") != std::string::npos, "%s: %s", label.c_str(), r.message.c_str());
+			}
+		}
+
+		// Not enough RAM for the compressed disc: through a temporary file instead.
+		{
+			Settings sc = zs;
+			sc.zar.compressDiscs = true;
+			sc.zar.discFormat = Format::CHD;
+			sc.engine.ramBudget = 1u << 20;
+			ApplyEngineSettings(sc.engine);
+			r = MakeZar(spec, sc, zdir);
+			ApplyEngineSettings(base.engine);
+			check(r, "CHD via temporary file", "Test Game.chd", nullptr, "Bonus GC.chd");
+			checkDisc(r, "CHD via temporary file", "Test Game.chd", Format::CHD);
+			CHECK(!fs::exists(U8Path(zdir) / "Test Game.isopk-temp.chd"), "temporary CHD left behind");
+		}
+
+		// Picked files and folders: clashing names get renamed, the archive goes next to the first one.
+		{
+			ZarSpec picked;
+			picked.name = "Picked";
+			picked.extras = { PathU8(game / "Test Game.iso"), PathU8(srcDir / "Test Game.iso"), PathU8(game / "DLC") };
+			Settings sp = zs;
+			sp.zar.level = 1;
+			sp.out.dir.clear();
+			ZarSpec measured = picked;
+			std::string err;
+			MeasureZarSpec(&measured, &err);
+			Job job;
+			job.zar = std::make_shared<const ZarSpec>(measured);
+			job.input.path = picked.extras[0];
+			job.target = Format::ZAR;
+			sp.out.conflict = Conflict::Overwrite;
+			job.settings = sp;
+			RunJob(job);
+			JobResult pr = job.Result();
+			CHECK(pr.state == JobState::Done, "picked: %s", pr.message.c_str());
+			CHECK(pr.outputPath == PathU8(game / "Picked.zar"), "picked output %s", pr.outputPath.c_str());
+			bool f1, f2, f3;
+			CHECK(ZarFile(pr.outputPath, "Test Game.iso", &f1) == iso && ZarFile(pr.outputPath, "Test Game (2).iso", &f2) == iso && f1 && f2,
+				"picked: renamed clash");
+			CHECK(ZarFile(pr.outputPath, "DLC/ULUS99999-DLC1/data.bin", &f3) == dlc && f3, "picked: DLC folder under its name");
+			fs::remove(U8Path(pr.outputPath), ec);
+		}
+
+		// The archive itself is never packed into itself, and an existing one is skipped by default.
+		{
+			Settings sk = zs;
+			sk.out.dir = PathU8(game);
+			ZarSpec m = spec;
+			std::string err;
+			MeasureZarSpec(&m, &err);
+			Job job;
+			job.zar = std::make_shared<const ZarSpec>(m);
+			job.input.path = spec.rootDir;
+			job.target = Format::ZAR;
+			sk.out.conflict = Conflict::Overwrite;
+			sk.zar.level = 1;
+			job.settings = sk;
+			RunJob(job);
+			JobResult a = job.Result();
+			CHECK(a.state == JobState::Done, "inside: %s", a.message.c_str());
+			Job again;
+			again.zar = job.zar;
+			again.input.path = spec.rootDir;
+			again.target = Format::ZAR;
+			sk.out.conflict = Conflict::Overwrite;
+			again.settings = sk;
+			RunJob(again);
+			bool found;
+			ZarFile(again.Result().outputPath, "Trails in the Sky.zar", &found);
+			CHECK(!found, "the archive packed itself");
+			sk.out.conflict = Conflict::Skip;
+			Job skip;
+			skip.zar = job.zar;
+			skip.input.path = spec.rootDir;
+			skip.target = Format::ZAR;
+			skip.settings = sk;
+			RunJob(skip);
+			CHECK(skip.State() == JobState::Skipped, "existing archive not skipped: %s", JobStateName(skip.State()));
+			fs::remove(U8Path(a.outputPath), ec);
+		}
+		// A normal job can't target ZAR.
+		JobResult bad = Convert(isoPath, Format::ZAR, base, zdir);
+		CHECK(bad.state == JobState::Failed, "a plain job made a ZAR");
 	}
 
 	// A tiny benchmark.

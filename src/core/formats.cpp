@@ -24,6 +24,7 @@ const char *FormatName(Format f) {
 	case Format::PBP: return "PBP";
 	case Format::WIA: return "WIA";
 	case Format::RVZ: return "RVZ";
+	case Format::ZAR: return "ZAR";
 	default: return "?";
 	}
 }
@@ -39,6 +40,7 @@ const char *FormatKey(Format f) {
 	case Format::PBP: return "pbp";
 	case Format::WIA: return "wia";
 	case Format::RVZ: return "rvz";
+	case Format::ZAR: return "zar";
 	default: return "unknown";
 	}
 }
@@ -54,6 +56,7 @@ const char *FormatExtension(Format f) {
 	case Format::PBP: return ".pbp";
 	case Format::WIA: return ".wia";
 	case Format::RVZ: return ".rvz";
+	case Format::ZAR: return ".zar";
 	default: return "";
 	}
 }
@@ -69,6 +72,7 @@ const char *FormatDescription(Format f) {
 	case Format::PBP: return "PSN EBOOT.PBP, LZRC blocks (PSP, PPSSPP)";
 	case Format::WIA: return "WIA, GameCube/Wii discs: bzip2/LZMA/LZMA2 chunks (wit, Dolphin)";
 	case Format::RVZ: return "RVZ, GameCube/Wii discs: zstd/LZMA2/bzip2 chunks, junk removed (Dolphin)";
+	case Format::ZAR: return "ZArchive: several discs, folders and DLC in one file, zstd blocks (Cemu, PPSSPP)";
 	default: return "";
 	}
 }
@@ -86,6 +90,7 @@ Format FormatFromName(const std::string &in) {
 	if (s == "pbp" || s == "eboot") return Format::PBP;
 	if (s == "wia") return Format::WIA;
 	if (s == "rvz") return Format::RVZ;
+	if (s == "zar" || s == "zarchive") return Format::ZAR;
 	return Format::Unknown;
 }
 

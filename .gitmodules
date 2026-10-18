@@ -16,3 +16,6 @@
 [submodule "external/iRVZ"]
 	path = external/iRVZ
 	url = https://github.com/LunaMoo/iRVZ
+[submodule "external/ZArchive"]
+	path = external/ZArchive
+	url = https://github.com/LunaMoo/ZArchive

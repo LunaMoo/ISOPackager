@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -161,6 +162,37 @@ private:
 	const std::atomic<bool> *cancel_;
 	std::unique_ptr<uint8_t[]> data_;
 	uint64_t size_ = 0, reserved_ = 0;
+	bool oom_ = false;
+};
+
+// A compressed image being built in RAM (CSO, CHD, PBP, RVZ...): the libraries write at any offset,
+// from several threads, and it grows as needed. Charged to the RAM budget as it grows.
+class MemoryOutput : public ImageWriter {
+public:
+	explicit MemoryOutput(const std::atomic<bool> *cancel = nullptr) : cancel_(cancel) {}
+	~MemoryOutput() override;
+
+	// Reserves room for about this much (an upper bound saves copying when it grows).
+	bool Begin(uint64_t sizeHint) override;
+	bool WriteAt(uint64_t offset, const void *data, size_t len) override;
+	bool Finish(uint64_t finalSize) override;
+	// Reading back what was written (CHD reads its header and map). Short at the end; bytes
+	// never written read back as whatever the allocation held.
+	size_t ReadAt(uint64_t offset, void *buf, size_t len);
+
+	uint64_t Size() const { return end_.load(); }
+	const uint8_t *Data() const { return data_.get(); }
+	bool OutOfMemory() const { return oom_; }
+	void Free();
+
+private:
+	bool Grow(uint64_t need);  // with mutex_ held exclusively
+
+	const std::atomic<bool> *cancel_;
+	mutable std::shared_mutex mutex_;
+	std::unique_ptr<uint8_t[]> data_;
+	uint64_t capacity_ = 0, reserved_ = 0;
+	std::atomic<uint64_t> end_{ 0 };
 	bool oom_ = false;
 };
 

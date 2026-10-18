@@ -18,6 +18,8 @@ enum class Format {
 	PBP,   // PSN EBOOT.PBP (NPUMDIMG), via iPBP
 	WIA,   // GameCube / Wii WIA (wit), via iRVZ
 	RVZ,   // GameCube / Wii RVZ (Dolphin), via iRVZ
+	ZAR,   // ZArchive: several discs, folders and DLC in one file. Only made by "Create ZArchive"
+	       // jobs, so it isn't in OutputFormats().
 	Count
 };
 

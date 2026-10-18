@@ -52,6 +52,8 @@ void Usage() {
 		"            With --against ISO, also compare with that ISO byte for byte.\n"
 		"  info      Show format, sizes, compression settings, disc ID and title.\n"
 		"  bench     Benchmark settings on the given images (see Benchmark options).\n"
+		"  zar       Pack a folder's contents (or several files and folders) into one ZArchive\n"
+		"            (.zar): discs, DLC folders and the like. See ZArchive options.\n"
 		"  formats   List the supported formats.\n\n"
 		"Output:\n"
 		"  -f, --to FMT           iso, cso, cso2, zso, dax, chd, pbp, rvz, wia\n"
@@ -92,6 +94,14 @@ void Usage() {
 		"      --pbp-file         Write Game.pbp instead of Game/EBOOT.PBP\n"
 		"      --no-trim          Keep PBP block padding when extracting\n"
 		"      --no-mac-check     Don't verify PBP block MACs when reading\n\n"
+		"ZArchive options (zar):\n"
+		"      --name NAME        Archive name (default: the folder's name)\n"
+		"      --zar-level N      zstd level 1-22 (default 22)\n"
+		"      --zar-precheck PCT Store blocks zstd's fastest level can't shrink below PCT%% (default 95,\n"
+		"                         0 = always compress)\n"
+		"      --store-discs      Don't compress disc images (use when they're already CSO, CHD, ...)\n"
+		"      --compress-discs FMT  Compress plain ISOs to FMT (cso, zso, chd, pbp, rvz...) in RAM first,\n"
+		"                         and store them; the format's options above apply\n\n"
 		"Benchmark options (bench):\n"
 		"      --cso-sets LIST    A,B,C,D,L (img_bench sets, 256K) and F,S,X (presets); default B,D,L\n"
 		"      --codecs LIST      CHD codec sets, comma separated, + inside a set; default default,lzma,zstd\n"
@@ -107,6 +117,7 @@ void Usage() {
 		"  isopackager-cli convert --to chd --codecs lzma+zstd -o D:\\CHD D:\\ISO\n"
 		"  isopackager-cli convert --to cso --preset max --block 16K game.chd\n"
 		"  isopackager-cli extract EBOOT.PBP\n"
+		"  isopackager-cli zar --compress-discs cso -o D:\\ZAR \"D:\\Games\\Trails in the Sky\"\n"
 		"  isopackager-cli bench --no-cso --codecs default --hunks 8192,32768 D:\\ISO\n",
 		ISOPK_VERSION, LibraryVersions().c_str(), DefaultBenchDir().c_str());
 }
@@ -117,6 +128,7 @@ struct Args {
 	Settings s;
 	bool explicitTarget = false;
 	std::string saveConfig, against;
+	std::string zarName;
 	// bench
 	std::string csoSets = "B,D,L", codecs = "default,lzma,zstd", hunks = "2048,4096,16384,65536", pbpModes = "lzrc,max,none", extra;
 	bool noCso = false, noChd = false, noPbp = false, sourceOnDisk = false;
@@ -176,6 +188,29 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 			}
 			a.s.target = f;
 			a.explicitTarget = true;
+		} else if (o == "--name") {
+			if (!val(a.zarName))
+				return false;
+		} else if (o == "--zar-level") {
+			if (!val(v))
+				return false;
+			a.s.zar.level = std::clamp(atoi(v.c_str()), 1, 22);
+		} else if (o == "--zar-precheck") {
+			if (!val(v))
+				return false;
+			a.s.zar.precheck = std::clamp(atof(v.c_str()), 0.0, 100.0);
+		} else if (o == "--store-discs") {
+			a.s.zar.storeDiscs = true;
+		} else if (o == "--compress-discs") {
+			if (!val(v))
+				return false;
+			Format f = FormatFromName(v);
+			if (f == Format::Unknown || f == Format::ISO || f == Format::ZAR || !FormatAvailable(f)) {
+				err = "--compress-discs takes a compressed disc format: " + v;
+				return false;
+			}
+			a.s.zar.compressDiscs = true;
+			a.s.zar.discFormat = f;
 		} else if (o == "-o" || o == "--output") {
 			if (!val(a.s.out.dir))
 				return false;
@@ -412,6 +447,10 @@ void PrintLine(const std::string &s) {
 }
 
 int RunConvert(Args &a) {
+	if (a.s.target == Format::ZAR) {
+		fprintf(stderr, "ZArchives are made with the zar command.\n");
+		return 1;
+	}
 	std::vector<std::string> warnings;
 	std::vector<InputFile> files = ScanInputs(a.inputs, a.s.recursive, &warnings, &g_interrupted);
 	for (auto &w : warnings)
@@ -470,6 +509,68 @@ int RunConvert(Args &a) {
 				fprintf(stderr, "  FAILED %s: %s\n", j->input.path.c_str(), j->Result().message.c_str());
 	}
 	return c.failed ? 2 : (c.cancelled ? 130 : 0);
+}
+
+int RunZar(Args &a) {
+	ZarSpec spec;
+	std::error_code ec;
+	if (a.inputs.size() == 1 && fs::is_directory(U8Path(a.inputs[0]), ec))
+		spec.rootDir = a.inputs[0];
+	else
+		spec.extras = a.inputs;
+	spec.name = a.zarName;
+	if (spec.name.empty()) {
+		fs::path p = U8Path(a.inputs[0]);
+		if (!p.has_filename())
+			p = p.parent_path();
+		spec.name = spec.rootDir.empty() ? PathU8(p.stem()) : PathU8(p.filename());
+	}
+	std::string err;
+	if (!MeasureZarSpec(&spec, &err)) {
+		fprintf(stderr, "%s\n", err.c_str());
+		return 1;
+	}
+	if (!g_quiet)
+		PrintLine(Fmt("ZArchive %s: %s from %zu path(s), %s, verify %s -> %s", spec.name.c_str(), HumanBytes(spec.totalSize).c_str(),
+			spec.Paths().size(), a.s.zar.Describe().c_str(), a.s.engine.verify ? "on" : "off", PlanZarOutputPath(spec, a.s).c_str()));
+	JobQueue q;
+	q.SetSettings(a.s);
+	auto job = q.AddZArchive(spec);
+	q.Start();
+	std::thread waiter([&] { q.WaitIdle(); });
+	bool cancelled = false;
+	while (q.Busy()) {
+		if (g_interrupted && !cancelled) {
+			PrintLine("Cancelling... (Ctrl+C again to quit at once)");
+			q.CancelAll();
+			cancelled = true;
+		}
+		if (g_tty && !g_quiet) {
+			printf("\r\033[K%s: %s %.0f%%", spec.name.c_str(), PhaseName(job->CurrentPhase()), job->overall.load() * 100);
+			fflush(stdout);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+	}
+	waiter.join();
+	if (g_tty)
+		printf("\r\033[K");
+	JobResult r = job->Result();
+	switch (r.state) {
+	case JobState::Done:
+		PrintLine(Fmt("Done: %s, %s -> %s (%.1f%%) in %s, verify %s. %s", r.outputPath.c_str(), HumanBytes(r.inputSize).c_str(),
+			HumanBytes(r.outputSize).c_str(), r.inputSize ? 100.0 * r.outputSize / r.inputSize : 0.0, HumanDuration(r.seconds).c_str(),
+			r.verify.c_str(), r.message.c_str()));
+		return 0;
+	case JobState::Skipped:
+		PrintLine("Skipped: " + r.message);
+		return 0;
+	case JobState::Cancelled:
+		PrintLine("Cancelled");
+		return 130;
+	default:
+		fprintf(stderr, "FAILED: %s\n", r.message.c_str());
+		return 2;
+	}
 }
 
 int RunVerify(Args &a) {
@@ -707,6 +808,8 @@ int main(int argc, char **argv) {
 		return RunConvert(a);
 	if (a.command == "verify")
 		return RunVerify(a);
+	if (a.command == "zar")
+		return RunZar(a);
 	if (a.command == "info")
 		return RunInfo(a);
 	if (a.command == "bench")

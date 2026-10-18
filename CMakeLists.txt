@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(ISOPackager VERSION 0.1.0 DESCRIPTION "Compress, extract, repack and benchmark disc images" LANGUAGES C CXX)
 
-# ISOPackager links mCSO (maxcso), CHDm (CHDmodern) and iPBP statically, from the submodules in external/.
+# ISOPackager links mCSO (maxcso), CHDm (CHDmodern), iPBP, iRVZ and ZArchive statically, from the submodules in external/.
 # Everything is built from source, so the same tree builds on Windows, Linux, macOS, FreeBSD,
 # Android, iOS and UWP without system packages.
 
@@ -66,7 +66,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 endif()
 
 set(EXT ${CMAKE_CURRENT_SOURCE_DIR}/external)
-foreach(sub maxcso CHDmodern iPBP iRVZ imgui)
+foreach(sub maxcso CHDmodern iPBP iRVZ ZArchive imgui)
 	if(NOT EXISTS ${EXT}/${sub}/.git AND NOT EXISTS ${EXT}/${sub}/README.md)
 		message(FATAL_ERROR "external/${sub} is empty: run  git submodule update --init --recursive")
 	endif()
@@ -159,6 +159,17 @@ set(IRVZ_LZMA_TARGET isopk_lzma CACHE STRING "" FORCE)
 add_subdirectory(${EXT}/iRVZ ${CMAKE_BINARY_DIR}/ext/iRVZ EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
+# ZArchive (.zar), on CHDmodern's zstd as well
+# ---------------------------------------------------------------------------
+set(ZARCHIVE_BUILD_TOOL OFF CACHE BOOL "" FORCE)
+set(ZARCHIVE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ZARCHIVE_INSTALL OFF CACHE BOOL "" FORCE)
+set(ZARCHIVE_ZSTD_TARGET chdm_zstd CACHE STRING "" FORCE)
+add_subdirectory(${EXT}/ZArchive ${CMAKE_BINARY_DIR}/ext/ZArchive EXCLUDE_FROM_ALL)
+# ZArchive asks for the static CRT itself; follow ours (the DLL one on UWP).
+set_target_properties(zarchive PROPERTIES MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+
+# ---------------------------------------------------------------------------
 # iPBP
 # ---------------------------------------------------------------------------
 set(IPBP_SHARED OFF CACHE BOOL "" FORCE)
@@ -181,13 +192,14 @@ add_library(isopk_core STATIC
 	src/core/scan.cpp
 	src/core/settings.cpp
 	src/core/sysinfo.cpp
-	src/core/util.cpp)
+	src/core/util.cpp
+	src/core/zar.cpp)
 target_include_directories(isopk_core PUBLIC src)
 target_compile_definitions(isopk_core PUBLIC
 	ISOPK_VERSION="${PROJECT_VERSION}"
 	$<$<BOOL:${ISOPK_WITH_CSO}>:ISOPK_WITH_CSO=1>
 	$<$<BOOL:${WIN32}>:NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE>)
-target_link_libraries(isopk_core PUBLIC chdmodern ipbp irvz ${ISOPK_ZLIB} Threads::Threads)
+target_link_libraries(isopk_core PUBLIC chdmodern ipbp irvz zarchive ${ISOPK_ZLIB} Threads::Threads)
 if(ISOPK_WITH_CSO)
 	target_link_libraries(isopk_core PUBLIC mcso mcso_lz4)
 endif()

@@ -190,6 +190,62 @@ bool App::DrawRvzSection(Format f, const char *header, bool open) {
 	return changed;
 }
 
+void App::DrawZarSection(bool open, bool *changed) {
+	if (!ImGui::CollapsingHeader("ZArchive (.zar)", open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+		return;
+	ImGui::PushID("zar");
+	ImGui::Indent();
+	ZarSettings &z = settings_.zar;
+	const float em = ImGui::GetFontSize();
+	const float labelW = em * 12;
+	auto row = [&](const char *label) {
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextUnformatted(label);
+		ImGui::SameLine(labelW);
+		ImGui::SetNextItemWidth(em * 14);
+	};
+	ImGui::TextDisabled("Used by Create ZArchive: several discs, folders and DLC in one archive, read with random access.");
+	row("zstd level");
+	*changed |= ImGui::SliderInt("##level", &z.level, 1, 22, z.level >= 20 ? "%d (ultra)" : "%d");
+	HelpMarker("22 is the smallest and slowest; every level reads back at the same speed. Blocks are 64K, compressed on all cores.");
+	row("Pre-check");
+	float pc = (float)z.precheck;
+	if (ImGui::SliderFloat("##precheck", &pc, 0.0f, 100.0f, pc <= 0.0f ? "off" : "%.0f%%")) {
+		z.precheck = pc < 0.5f ? 0.0 : std::round(pc);
+		*changed = true;
+	}
+	HelpMarker("Each block is first tried at zstd's fastest level. Blocks that don't get below this share of their size are stored as "
+			   "they are, without spending time on the level above: already compressed games (CSO, CHD, RVZ...) or videos inside the "
+			   "archive then cost almost nothing, and read back without decompressing. 95% keeps everything that compresses.");
+	*changed |= ImGui::Checkbox("Don't compress game discs", &z.storeDiscs);
+	Tip("Store disc images (ISO, CSO, CHD, PBP, RVZ...) without compressing them; the rest (DLC, saves) is still compressed. "
+		"Use it when the games are already in a compressed format: it's faster, and they read back without a second decompression.");
+	if (z.storeDiscs) {
+		ImGui::SameLine();
+		ImGui::TextDisabled("(the pre-check already catches most compressed discs)");
+	}
+	*changed |= ImGui::Checkbox("Compress the game discs before adding them", &z.compressDiscs);
+	Tip("Plain ISOs are compressed by ISOPackager first, in RAM (through a temporary file when the RAM budget is too small), and the "
+		"result goes into the archive uncompressed. Images already in a compressed format go in as they are. The chosen format's own "
+		"settings above apply.");
+	if (z.compressDiscs) {
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(em * 6.5f);
+		if (FormatCombo("##discfmt", &z.discFormat, false))
+			*changed = true;
+		Tip(FormatDescription(z.discFormat));
+		if (z.discFormat == Format::PBP || IsIrvzFormat(z.discFormat)) {
+			ImGui::Indent();
+			ImGui::TextDisabled(z.discFormat == Format::PBP ? "PBP only takes PSP games; other discs go in as they are."
+															: "RVZ/WIA only take GameCube and Wii discs; other discs go in as they are.");
+			ImGui::Unindent();
+		}
+	}
+	ImGui::TextDisabled("%s", z.Describe().c_str());
+	ImGui::Unindent();
+	ImGui::PopID();
+}
+
 void App::DrawSettings() {
 	bool changed = false;
 	const float em = ImGui::GetFontSize();
@@ -382,6 +438,7 @@ void App::DrawSettings() {
 
 	changed |= DrawRvzSection(Format::RVZ, "RVZ (iRVZ, GameCube and Wii)", true);
 	changed |= DrawRvzSection(Format::WIA, "WIA (iRVZ, GameCube and Wii)", false);
+	DrawZarSection(true, &changed);
 #ifdef ISOPK_WITH_CSO
 	changed |= DrawCsoSection(Format::CSO2, "CSO v2 (maxcso, experimental)", false);
 	changed |= DrawCsoSection(Format::DAX, "DAX (maxcso)", false);
@@ -899,11 +956,14 @@ void App::DrawAbout() {
 		ImGui::SameLine(ImGui::GetFontSize() * 4);
 		ImGui::TextUnformatted(FormatDescription(f));
 	}
+	FormatBadge(Format::ZAR);
+	ImGui::SameLine(ImGui::GetFontSize() * 4);
+	ImGui::Text("%s - with Create ZArchive", FormatDescription(Format::ZAR));
 	ImGui::Spacing();
 	ImGui::SeparatorText("Links");
 	const char *links[][2] = { { "ISOPackager", "https://github.com/LunaMoo/ISOPackager" }, { "maxcso (mCSO)", "https://github.com/LunaMoo/maxcso" },
 		{ "CHDmodern", "https://github.com/LunaMoo/CHDmodern" }, { "iPBP", "https://github.com/LunaMoo/iPBP" },
-		{ "iRVZ", "https://github.com/LunaMoo/iRVZ" },
+		{ "iRVZ", "https://github.com/LunaMoo/iRVZ" }, { "ZArchive", "https://github.com/LunaMoo/ZArchive" },
 		{ "Dear ImGui", "https://github.com/ocornut/imgui" } };
 	for (auto &l : links) {
 		if (hooks_.openUrl) {
@@ -955,7 +1015,8 @@ void App::DrawStatusBar() {
 }
 
 void App::DrawModals() {
-	if (browser_.Draw() && browserThen_) {
+	DrawZarDialog();
+	if (!zarDlg_.open && browser_.Draw() && browserThen_) {
 		auto then = browserThen_;
 		browserThen_ = nullptr;
 		then(browser_.Result());

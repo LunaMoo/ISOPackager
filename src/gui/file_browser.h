@@ -10,7 +10,8 @@ namespace isopk::gui {
 
 class FileBrowser {
 public:
-	enum Mode { PickFiles, PickFolder };
+	// PickAny: any files and folders together, several at once (native dialogs can't mix them).
+	enum Mode { PickFiles, PickFolder, PickAny };
 
 	// Opens the browser; Draw() must then be called every frame.
 	void Open(Mode mode, const std::string &title, const std::string &startDir = "");

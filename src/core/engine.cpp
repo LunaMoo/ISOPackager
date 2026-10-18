@@ -52,7 +52,7 @@ std::string LibraryVersions() {
 #ifdef ISOPK_WITH_CSO
 	s += Fmt("mCSO %s, ", maxcso_version());
 #endif
-	s += Fmt("CHDmodern %s, iPBP %s, iRVZ %s", chdm_version(), ipbp_version(), irvz_version());
+	s += Fmt("CHDmodern %s, iPBP %s, iRVZ %s, ZArchive", chdm_version(), ipbp_version(), irvz_version());
 	return s;
 }
 
@@ -78,6 +78,7 @@ const char *PhaseName(Phase p) {
 	case Phase::Compressing: return "Compressing";
 	case Phase::Verifying: return "Verifying";
 	case Phase::Finishing: return "Finishing";
+	case Phase::Archiving: return "Archiving";
 	}
 	return "";
 }
@@ -200,6 +201,18 @@ int ChdBegin(void *user, uint64_t size) {
 
 size_t ChdWrite(void *user, uint64_t offset, const void *buf, size_t len) {
 	return ((ImageWriter *)user)->WriteAt(offset, buf, len) ? len : 0;
+}
+
+size_t ChdOutRead(void *user, uint64_t offset, void *buf, size_t len) {
+	return ((MemoryOutput *)user)->ReadAt(offset, buf, len);
+}
+
+size_t ChdOutWrite(void *user, uint64_t offset, const void *buf, size_t len) {
+	return ((MemoryOutput *)user)->WriteAt(offset, buf, len) ? len : (size_t)-1;
+}
+
+uint64_t ChdOutSize(void *user) {
+	return ((MemoryOutput *)user)->Size();
 }
 
 bool ChdResult(int rc, OpContext &ctx, ImageWriter *w = nullptr) {
@@ -448,6 +461,67 @@ bool CompressImage(ImageReader &iso, Format target, const Settings &s, const std
 	}
 }
 
+bool CompressToMemory(ImageReader &iso, Format target, const Settings &s, MemoryOutput &out, OpContext &ctx) {
+	ReaderBox box(&iso);
+	// Room for about the ISO's size up front: a compressed image rarely needs more, and growing
+	// a multi-gigabyte buffer means copying it.
+	if (!out.Begin(iso.Size())) {
+		SetError(ctx, out.Error());
+		return false;
+	}
+	auto writeFailed = [&] {
+		if (!out.Error().empty() && !ctx.Cancelled())
+			SetError(ctx, out.Error());
+	};
+	switch (target) {
+#ifdef ISOPK_WITH_CSO
+	case Format::CSO:
+	case Format::CSO2:
+	case Format::ZSO:
+	case Format::DAX: {
+		std::lock_guard<std::mutex> lane(McsoLane());
+		maxcso_options o;
+		McsoOptions(target, s, &o);
+		maxcso_reader r{ &box, iso.Size(), &McsoRead };
+		maxcso_writer w{ (ImageWriter *)&out, &McsoBegin, &McsoWrite };
+		char err[512] = "";
+		int rc = maxcso_process_io(nullptr, &r, &w, &o, &McsoProgress, &ctx, err, sizeof(err));
+		if (rc != MAXCSO_RESULT_SUCCESS)
+			writeFailed();
+		return McsoResult(rc, err, ctx) && out.Finish(UINT64_MAX);
+	}
+#endif
+	case Format::CHD: {
+		chdm_io io{ &box, &ChdIoSize, &ChdIoRead, nullptr };
+		chdm_output co{ &out, &ChdOutRead, &ChdOutWrite, &ChdOutSize };
+		uint32_t list[4];
+		int rc = chdm_create_dvd_to_output(&io, &co, s.chd.hunkBytes, ChdCodecs(s, list), &ChdProgress, &ctx);
+		return ChdResult(rc, ctx, &out) && out.Finish(UINT64_MAX);
+	}
+	case Format::PBP: {
+		PbpJob job(ctx);
+		ipbp_iso2pbp_options o;
+		std::vector<uint8_t> png;
+		if (!PbpOptions(s, &o, &png, ctx))
+			return false;
+		ipbp_reader r{ &box, iso.Size(), &PbpRead };
+		ipbp_writer w{ (ImageWriter *)&out, nullptr, &PbpWrite, &PbpFinish };
+		return job.Result(ipbp_iso_to_pbp_io(job.job, &r, &w, &o), &out);
+	}
+	case Format::WIA:
+	case Format::RVZ: {
+		irvz_compress_options o;
+		IrvzOptions(target, s, &o);
+		irvz_reader r{ &box, iso.Size(), &IrvzRead };
+		irvz_writer w{ (ImageWriter *)&out, &IrvzBegin, &IrvzWrite, &IrvzFinish };
+		return IrvzResult(irvz_compress(&r, &w, &o, &IrvzProgress, &ctx), ctx, &out);
+	}
+	default:
+		SetError(ctx, Fmt("can't compress to %s", FormatName(target)));
+		return false;
+	}
+}
+
 bool DecompressToFile(const std::string &in, Format format, const Settings &s, const std::string &iso, bool trimPbp, OpContext &ctx) {
 	switch (format) {
 #ifdef ISOPK_WITH_CSO
@@ -675,7 +749,165 @@ struct Plan {
 
 }  // namespace
 
+std::string PlanZarOutputPath(const ZarSpec &spec, const Settings &s) {
+	fs::path dir = s.out.dir.empty() ? U8Path(spec.SourceDir()) : U8Path(s.out.dir);
+	std::string name = spec.name;
+	// Characters no file system takes.
+	for (char &c : name)
+		if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+			c = '_';
+	if (name.empty())
+		name = "archive";
+	return PathU8(dir / U8Path(name + ".zar"));
+}
+
+namespace {
+
+void RunZarJob(Job &job) {
+	const Settings &s = job.settings;
+	const ZarSpec &spec = *job.zar;
+	const auto t0 = Clock::now();
+	JobResult res;
+	res.inputSize = spec.totalSize;
+	res.isoSize = spec.totalSize;  // the ratio column: archive size against everything that went in
+	job.state = (int)JobState::Running;
+
+	auto finish = [&](JobState st, const std::string &msg) {
+		res.state = st;
+		if (!msg.empty())
+			res.message = msg;
+		res.seconds = SecondsSince(t0);
+		job.phase = (int)Phase::Idle;
+		if (st == JobState::Done)
+			job.overall = 1.0;
+		{
+			std::lock_guard<std::mutex> g(job.resultMutex);
+			job.result = res;
+		}
+		job.state = (int)st;
+		const char *name = spec.name.c_str();
+		switch (st) {
+		case JobState::Done:
+			Log(LogLevel::Info, Fmt("Done: %s -> %s (%s, %.1f%%, %s)%s; %s", name, res.outputPath.c_str(), HumanBytes(res.outputSize).c_str(),
+				res.isoSize ? 100.0 * res.outputSize / res.isoSize : 0.0, HumanDuration(res.seconds).c_str(),
+				res.verify == "OK" ? ", verified" : "", res.message.c_str()));
+			break;
+		case JobState::Skipped: Log(LogLevel::Info, Fmt("Skipped: %s: %s", name, res.message.c_str())); break;
+		case JobState::Cancelled: Log(LogLevel::Warning, Fmt("Cancelled: %s", name)); break;
+		case JobState::Failed: Log(LogLevel::Error, Fmt("Failed: %s: %s", name, res.message.c_str())); break;
+		default: break;
+		}
+	};
+
+	std::string final = PlanZarOutputPath(spec, s);
+	std::error_code ec;
+	OutputClaim claim;
+	{
+		std::lock_guard<std::mutex> g(ClaimMutex());
+		auto taken = [&](const std::string &p) { return fs::exists(U8Path(p), ec) || Claimed().count(ClaimKey(p)) != 0; };
+		if (taken(final)) {
+			const bool busy = Claimed().count(ClaimKey(final)) != 0;
+			if (s.out.conflict == Conflict::Skip && !busy)
+				return finish(JobState::Skipped, "output exists: " + final);
+			if (s.out.conflict == Conflict::Rename || busy)
+				final = UniquePath(final, false, taken);
+		}
+		claim.Take(final);
+	}
+	res.outputPath = final;
+	fs::create_directories(U8Path(final).parent_path(), ec);
+	if (ec)
+		return finish(JobState::Failed, "can't create " + PathU8(U8Path(final).parent_path()) + ": " + ec.message());
+	const std::string part = final + ".part";
+	RemoveFile(part);
+
+	std::vector<ZarEntry> entries;
+	std::string err;
+	if (!PlanZarEntries(spec, final, &entries, &err))
+		return finish(JobState::Failed, err);
+	uint64_t freeSpace = FreeDiskSpace(final);
+	if (freeSpace != UINT64_MAX && freeSpace < spec.totalSize / 2)
+		Log(LogLevel::Warning, Fmt("%s: only %s free next to the output", spec.name.c_str(), HumanBytes(freeSpace).c_str()));
+
+	Plan plan;
+	plan.phases.push_back({ Phase::Archiving, 1.0 });
+	if (s.engine.verify)
+		plan.phases.push_back({ Phase::Verifying, 0.15 });
+	OpContext ctx;
+	ctx.cancel = &job.cancel;
+	Phase cur = Phase::Archiving;
+	auto enter = [&](Phase p) {
+		cur = p;
+		job.phase = (int)p;
+		job.phaseProgress = 0.0;
+		job.overall = plan.Overall(p, 0.0);
+	};
+	ctx.progress = [&](double f) {
+		job.phaseProgress = f;
+		job.overall = plan.Overall(cur, f);
+	};
+	auto fail = [&](const std::string &what) {
+		RemoveFile(part);
+		if (ctx.cancelled || job.cancel.load())
+			return finish(JobState::Cancelled, "cancelled");
+		return finish(JobState::Failed, what.empty() ? ctx.error : what + ": " + ctx.error);
+	};
+
+	Log(LogLevel::Info, Fmt("Start: ZArchive %s (%zu entries, %s) -> %s [%s]", spec.name.c_str(), entries.size(), HumanBytes(spec.totalSize).c_str(),
+		final.c_str(), s.zar.Describe().c_str()));
+	enter(Phase::Archiving);
+	ZarProgress zp;
+	// The phase label follows what's happening: a disc being compressed first, or archiving.
+	zp.onPhase = [&](bool compressing, const std::string &) { job.phase = (int)(compressing ? Phase::Compressing : Phase::Archiving); };
+	ZarReport report;
+	Clock::time_point tc = Clock::now();
+	if (!WriteZArchive(spec, entries, s, part, ctx, zp, &report))
+		return fail("");
+	res.compressSecs = SecondsSince(tc);
+	res.extractSecs = report.compressDiscSecs;
+
+	if (s.engine.verify) {
+		Clock::time_point tv = Clock::now();
+		enter(Phase::Verifying);
+		std::string verdict;
+		if (!VerifyZArchive(part, report.written, ctx, &verdict)) {
+			res.verify = verdict.empty() ? ctx.error : verdict;
+			if (!verdict.empty())
+				ctx.error = verdict;
+			return fail("verify failed");
+		}
+		res.verifySecs = SecondsSince(tv);
+		res.verify = "OK";
+	} else {
+		res.verify = "off";
+	}
+
+	enter(Phase::Finishing);
+	if (fs::exists(U8Path(final), ec))
+		RemoveFile(final);
+	fs::rename(U8Path(part), U8Path(final), ec);
+	if (ec) {
+		RemoveFile(part);
+		return finish(JobState::Failed, "can't rename the output: " + ec.message());
+	}
+	res.outputSize = fs::file_size(U8Path(final), ec);
+	res.message = report.Summary();
+	finish(JobState::Done, "");
+}
+
+}  // namespace
+
 void RunJob(Job &job) {
+	if (job.zar)
+		return RunZarJob(job);
+	if (job.target.load() == Format::ZAR) {
+		std::lock_guard<std::mutex> g(job.resultMutex);
+		job.result.state = JobState::Failed;
+		job.result.message = "ZArchives are made with Create ZArchive (CLI: the zar command)";
+		job.state = (int)JobState::Failed;
+		Log(LogLevel::Error, "Failed: " + job.input.path + ": " + job.result.message);
+		return;
+	}
 	const Settings &s = job.settings;
 	const InputFile &in = job.input;
 	const auto t0 = Clock::now();

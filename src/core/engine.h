@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -12,6 +13,7 @@
 #include "core/image.h"
 #include "core/scan.h"
 #include "core/settings.h"
+#include "core/zar.h"
 
 namespace isopk {
 
@@ -44,6 +46,8 @@ struct OpContext {
 bool CompressFile(const std::string &isoPath, Format target, const Settings &s, const std::string &outPath, OpContext &ctx);
 // ISO in RAM (or any thread-safe reader) -> format (callback interfaces).
 bool CompressImage(ImageReader &iso, Format target, const Settings &s, const std::string &outPath, OpContext &ctx);
+// ISO (any thread-safe reader) -> format, built in RAM (out grows as the library writes).
+bool CompressToMemory(ImageReader &iso, Format target, const Settings &s, MemoryOutput &out, OpContext &ctx);
 // Image -> ISO file.
 bool DecompressToFile(const std::string &inPath, Format format, const Settings &s, const std::string &isoPath, bool trimPbp, OpContext &ctx);
 // Image -> writer (RAM, comparison, ...). An ISO input is streamed through as it is.
@@ -54,7 +58,7 @@ bool DecompressToWriter(const std::string &inPath, Format format, const Settings
 enum class JobState { Queued, Running, Done, Skipped, Failed, Cancelled };
 const char *JobStateName(JobState s);
 
-enum class Phase { Idle, WaitingRam, WaitingCso, LoadingRam, Extracting, Compressing, Verifying, Finishing };
+enum class Phase { Idle, WaitingRam, WaitingCso, LoadingRam, Extracting, Compressing, Verifying, Finishing, Archiving };
 const char *PhaseName(Phase p);
 
 struct JobResult {
@@ -69,6 +73,8 @@ struct JobResult {
 
 struct Job {
 	InputFile input;
+	// Set for a "Create ZArchive" job: input.path is then its first source, input.size the total.
+	std::shared_ptr<const ZarSpec> zar;
 	std::atomic<Format> target{ Format::CSO };  // may be changed by the UI while queued
 	Settings settings;  // snapshot taken when the job starts
 
@@ -88,6 +94,9 @@ struct Job {
 		return result;
 	}
 };
+
+// Where a ZArchive job's archive goes, before conflict handling.
+std::string PlanZarOutputPath(const ZarSpec &spec, const Settings &s);
 
 // Where the output of converting input to target goes, before conflict handling.
 std::string PlanOutputPath(const InputFile &input, Format target, const Settings &s);

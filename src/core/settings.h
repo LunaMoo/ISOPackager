@@ -94,6 +94,17 @@ struct RvzSettings {
 	std::string Describe(Format format) const;
 };
 
+// ---- ZArchive (.zar) --------------------------------------------------------------------------
+
+struct ZarSettings {
+	int level = 22;            // zstd 1..22, highest by default
+	double precheck = 95.0;    // store blocks zstd's fastest level can't get below this % (0 = always try)
+	bool storeDiscs = false;   // don't compress disc images at all (they're already CSO/CHD/...)
+	bool compressDiscs = false;  // compress plain ISOs with ISOPackager first (in RAM), then store them
+	Format discFormat = FormatAvailable(Format::CSO) ? Format::CSO : Format::CHD;
+	std::string Describe() const;
+};
+
 // ---- Where outputs go -------------------------------------------------------------------------
 
 enum class Conflict { Skip, Overwrite, Rename };
@@ -128,6 +139,7 @@ struct Settings {
 	ChdSettings chd;
 	PbpSettings pbp;
 	RvzSettings rvz, wia;
+	ZarSettings zar;
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders

@@ -6,13 +6,15 @@ Dear ImGui interface and a command line tool that share the same engine.
 | In                                   | Out                                      |
 |--------------------------------------|------------------------------------------|
 | ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP, WIA, RVZ | any of them (RVZ/WIA: GameCube and Wii discs; PBP: PSP games) |
+| a folder, or any files and folders   | one ZArchive (`.zar`): several discs, DLC folders and the rest together |
 
-Built on three libraries, linked statically from the submodules in `external/`:
+Built on these libraries, linked statically from the submodules in `external/`:
 
 - [mCSO / maxcso](https://github.com/LunaMoo/maxcso) — CSO v1, CSO v2, ZSO and DAX
 - [CHDmodern](https://github.com/LunaMoo/CHDmodern) — MAME's CHD code (DVD CHDs, like `chdman createdvd`)
 - [iPBP](https://github.com/LunaMoo/iPBP) — PSN-style EBOOT.PBP (NPUMDIMG), LZRC and LZRC max
 - [iRVZ](https://github.com/LunaMoo/iRVZ) — WIA and RVZ (GameCube / Wii), from Dolphin's WIABlob
+- [ZArchive](https://github.com/LunaMoo/ZArchive) — zstd-compressed, random-access file archives
 
 ## What it does
 
@@ -35,6 +37,17 @@ Built on three libraries, linked statically from the submodules in `external/`:
   skipped, overwritten or renamed; sources can be deleted after a verified conversion.
 - **Multithreaded**: every library uses all cores, and several files can be converted at once
   (CHD and PBP jobs in parallel; maxcso tasks take turns, since its buffer pool is global).
+- **Create ZArchive**: pick a folder (its contents become the archive's root, like the zarchive
+  tool packs a folder), name the archive, and it's queued as one entry (*files* → *ZAR*, with the
+  combined size); more files and folders from elsewhere can be added in the same dialog. Blocks
+  are zstd level 22 by default, compressed on all cores, with a **pre-check**: every 64K block is
+  first tried at zstd's fastest level, and blocks that don't get below 95% are stored as they are,
+  so already compressed games (CSO, CHD, RVZ…) cost almost no time and read back without a second
+  decompression. Settings > ZArchive also has "Don't compress game discs" (for games already in
+  compressed formats) and "Compress the game discs before adding them" with a format: plain ISOs
+  are compressed **in RAM** through the libraries' writer callbacks and the result goes straight
+  into the archive, stored uncompressed (through a temporary file only when the RAM budget is too
+  small). Verify reads every file back from the finished archive and compares it with what went in.
 - **Benchmark**: the successor of `img_bench` — for every image and every setting it compresses
   (timed), records the size, decodes again (timed, compared byte for byte) and times random reads
   the way an emulator seeks (CSO/ZSO/CHD). What it runs is a list you build with "Add to
@@ -54,11 +67,17 @@ isopackager-cli verify --against original.iso game.cso
 isopackager-cli info D:\Games
 isopackager-cli bench --no-cso --codecs default,zstd --hunks 8192,32768 D:\ISO
 isopackager-cli bench --cso-sets A,B,C,D,L --pbp-modes max game.iso
+isopackager-cli zar --compress-discs cso -o D:\ZAR "D:\Games\Trails in the Sky"
+isopackager-cli zar --name "Trails" --store-discs game1.chd game2.chd D:\DLC\ULUS10000
 ```
 
 `isopackager-cli --help` lists everything. The `bench` options match `img_bench`
 (`--cso-sets`, `--codecs`, `--hunks`, `--pbp-modes`, `--reads`, `--no-cso/--no-chd/--no-pbp`,
 `--no-verify`), plus `--extra zso,cso2,dax`, `--source-on-disk` and `--work DIR`.
+
+`zar` packs one folder's contents, or several files and folders each under its own name, into
+`<name>.zar` (`--name`, default the folder's name) with `--zar-level`, `--zar-precheck`,
+`--store-discs` and `--compress-discs FMT`. The GUI takes `--zar FOLDER` to open Create ZArchive.
 
 CSO benchmark sets (from img_bench): A zopfli5, B zopfli5 splits 20, C pre-check 98% + zopfli5,
 D pre-check 98% + zopfli5 splits 20, L libdeflate12 only (all at 256K blocks), and F / S / X for
@@ -98,13 +117,12 @@ Options: `-DISOPK_BUILD_GUI=OFF`, `-DISOPK_BUILD_CLI=OFF`, `-DISOPK_WITH_CSO=OFF
 - **Android**: `cd android && gradle assembleRelease` (Android SDK + NDK, Gradle 8.11).
 - **UWP**: `-DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0`.
 
-### Linking the three libraries together
+### Linking the libraries together
 
-Two pieces of third-party code exist twice when mCSO, CHDmodern and iPBP are linked into one
-program. Both are resolved in ISOPackager's own `CMakeLists.txt`, without changing the submodules:
+Some third-party code exists more than once when the libraries are linked into one program. Both are resolved in ISOPackager's own `CMakeLists.txt`, without changing the submodules:
 
 - **zlib** — maxcso bundles 1.2.11, CHDmodern 1.3.2 (same API): CHDmodern uses maxcso's.
-- **zstd** — CHDmodern and iRVZ bundle the same version: iRVZ uses CHDmodern's.
+- **zstd** — CHDmodern and iRVZ bundle the same version: iRVZ and ZArchive use CHDmodern's.
 - **LZMA SDK** — CHDmodern and iRVZ bundle the same 2024 files (iRVZ's adds LZMA2), built once
   for both. maxcso's 7-zip deflate encoder bundles the 2017 `LzFind.c`, the others the 2024 one; they export the same `MatchFinder_*` names with different
   struct layouts, so a plain link would silently mix them. CHDmodern's copy is built with those

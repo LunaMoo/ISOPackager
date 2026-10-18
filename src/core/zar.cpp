@@ -1,0 +1,535 @@
+#include "core/zar.h"
+
+#include <algorithm>
+#include <cstring>
+#include <set>
+
+#include <zarchive/zarchivereader.h>
+#include <zarchive/zarchivewriter.h>
+
+#include "core/engine.h"
+#include "core/fileio.h"
+#include "core/image.h"
+#include "core/settings.h"
+#include "core/util.h"
+
+namespace isopk {
+
+// ---- Hash -------------------------------------------------------------------------------------
+
+namespace {
+inline uint64_t Rotl(uint64_t x, int r) {
+	return (x << r) | (x >> (64 - r));
+}
+inline uint64_t Load64(const uint8_t *p) {
+	uint64_t v = 0;
+	for (int i = 7; i >= 0; --i)
+		v = (v << 8) | p[i];
+	return v;
+}
+}  // namespace
+
+void StreamHash::Word(uint64_t w) {
+	h_ ^= Rotl(w * 0xC2B2AE3D27D4EB4Full, 31) * 0x9E3779B97F4A7C15ull;
+	h_ = Rotl(h_, 27) * 0x9E3779B97F4A7C15ull + 0x85EBCA77C2B2AE63ull;
+}
+
+void StreamHash::Update(const void *data, size_t len) {
+	const uint8_t *p = (const uint8_t *)data;
+	total_ += len;
+	while (tailLen_ && len) {
+		tail_[tailLen_++] = *p++;
+		--len;
+		if (tailLen_ == 8) {
+			Word(Load64(tail_));
+			tailLen_ = 0;
+		}
+	}
+	for (; len >= 8; p += 8, len -= 8)
+		Word(Load64(p));
+	while (len--)
+		tail_[tailLen_++] = *p++;
+}
+
+uint64_t StreamHash::Final() const {
+	uint64_t h = h_;
+	uint8_t last[8] = {};
+	memcpy(last, tail_, tailLen_);
+	h ^= Rotl(Load64(last) * 0xC2B2AE3D27D4EB4Full, 31) * 0x9E3779B97F4A7C15ull;
+	h ^= total_ * 0x165667B19E3779F9ull;
+	h ^= h >> 33;
+	h *= 0xFF51AFD7ED558CCDull;
+	h ^= h >> 33;
+	h *= 0xC4CEB9FE1A85EC53ull;
+	h ^= h >> 33;
+	return h;
+}
+
+// ---- Spec -------------------------------------------------------------------------------------
+
+std::string ZarSpec::SourceDir() const {
+	const std::string &first = !rootDir.empty() ? rootDir : (extras.empty() ? std::string() : extras.front());
+	if (first.empty())
+		return {};
+	fs::path p = U8Path(first);
+	// "D:/Games/Trails/" -> "D:/Games"
+	if (!p.has_filename())
+		p = p.parent_path();
+	return PathU8(p.parent_path());
+}
+
+std::vector<std::string> ZarSpec::Paths() const {
+	std::vector<std::string> v;
+	if (!rootDir.empty())
+		v.push_back(rootDir);
+	v.insert(v.end(), extras.begin(), extras.end());
+	return v;
+}
+
+namespace {
+
+uint64_t TreeSize(const fs::path &p, uint64_t *files) {
+	std::error_code ec;
+	if (fs::is_regular_file(p, ec)) {
+		++*files;
+		return fs::file_size(p, ec);
+	}
+	uint64_t total = 0;
+	if (fs::is_directory(p, ec))
+		for (auto it = fs::recursive_directory_iterator(p, fs::directory_options::skip_permission_denied, ec);
+			 !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+			std::error_code e2;
+			if (it->is_regular_file(e2)) {
+				++*files;
+				total += it->file_size(e2);
+			}
+		}
+	return total;
+}
+
+std::string KeyOf(const std::string &archivePath) {
+	return ToLower(archivePath);  // ZArchive compares a-z case-insensitively
+}
+
+// "dir/Name.ext" not yet in used: "dir/Name (2).ext", ...
+std::string Unique(const std::string &archivePath, std::set<std::string> &used) {
+	if (used.insert(KeyOf(archivePath)).second)
+		return archivePath;
+	size_t slash = archivePath.rfind('/');
+	std::string dir = slash == std::string::npos ? "" : archivePath.substr(0, slash + 1);
+	std::string name = archivePath.substr(dir.size());
+	size_t dot = name.rfind('.');
+	std::string stem = dot == std::string::npos || dot == 0 ? name : name.substr(0, dot);
+	std::string ext = dot == std::string::npos || dot == 0 ? "" : name.substr(dot);
+	for (int i = 2;; ++i) {
+		std::string cand = dir + stem + Fmt(" (%d)", i) + ext;
+		if (used.insert(KeyOf(cand)).second)
+			return cand;
+	}
+}
+
+std::string NormKey(const fs::path &p) {
+	std::error_code ec;
+	std::string k = PathU8(fs::absolute(p, ec).lexically_normal());
+#ifdef _WIN32
+	k = ToLower(k);
+#endif
+	return k;
+}
+
+struct Planner {
+	std::vector<ZarEntry> *out = nullptr;
+	std::set<std::string> used;
+	std::set<std::string> excluded;
+
+	void Add(const fs::path &src, const std::string &archivePath) {
+		std::error_code ec;
+		if (excluded.count(NormKey(src)))
+			return;
+		if (fs::is_directory(src, ec)) {
+			ZarEntry d;
+			d.source = PathU8(src);
+			d.archivePath = Unique(archivePath, used);
+			d.isDir = true;
+			out->push_back(d);
+			std::vector<fs::path> children;
+			for (auto it = fs::directory_iterator(src, fs::directory_options::skip_permission_denied, ec); !ec && it != fs::directory_iterator();
+				 it.increment(ec))
+				children.push_back(it->path());
+			std::sort(children.begin(), children.end(), [](const fs::path &a, const fs::path &b) {
+				return ToLower(PathU8(a.filename())) < ToLower(PathU8(b.filename()));
+			});
+			const std::string base = d.archivePath;  // out->back() moves on as children are added
+			for (const fs::path &c : children)
+				Add(c, base + "/" + PathU8(c.filename()));
+			return;
+		}
+		if (!fs::is_regular_file(src, ec))
+			return;
+		ZarEntry f;
+		f.source = PathU8(src);
+		f.archivePath = Unique(archivePath, used);
+		f.size = fs::file_size(src, ec);
+		if (IsImageExtension(ToLower(PathU8(src.extension()))))
+			f.disc = DetectFormat(f.source);
+		out->push_back(f);
+	}
+};
+
+}  // namespace
+
+bool MeasureZarSpec(ZarSpec *spec, std::string *error) {
+	uint64_t files = 0, total = 0;
+	for (const std::string &p : spec->Paths())
+		total += TreeSize(U8Path(p), &files);
+	spec->totalSize = total;
+	if (files == 0) {
+		if (error)
+			*error = "no files to put into the archive";
+		return false;
+	}
+	return true;
+}
+
+bool PlanZarEntries(const ZarSpec &spec, const std::string &exclude, std::vector<ZarEntry> *entries, std::string *error) {
+	entries->clear();
+	Planner pl;
+	pl.out = entries;
+	if (!exclude.empty()) {
+		pl.excluded.insert(NormKey(U8Path(exclude)));
+		pl.excluded.insert(NormKey(U8Path(exclude + ".part")));
+	}
+	std::error_code ec;
+	if (!spec.rootDir.empty()) {
+		fs::path root = U8Path(spec.rootDir);
+		if (!fs::is_directory(root, ec)) {
+			*error = spec.rootDir + " is not a folder";
+			return false;
+		}
+		std::vector<fs::path> children;
+		for (auto it = fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec); !ec && it != fs::directory_iterator();
+			 it.increment(ec))
+			children.push_back(it->path());
+		std::sort(children.begin(), children.end(),
+			[](const fs::path &a, const fs::path &b) { return ToLower(PathU8(a.filename())) < ToLower(PathU8(b.filename())); });
+		for (const fs::path &c : children)
+			pl.Add(c, PathU8(c.filename()));
+	}
+	for (const std::string &x : spec.extras) {
+		fs::path p = U8Path(x);
+		if (!p.has_filename())
+			p = p.parent_path();
+		if (!fs::exists(p, ec)) {
+			*error = x + " doesn't exist";
+			return false;
+		}
+		pl.Add(p, PathU8(p.filename()));
+	}
+	bool anyFile = std::any_of(entries->begin(), entries->end(), [](const ZarEntry &e) { return !e.isDir; });
+	if (!anyFile) {
+		*error = "no files to put into the archive";
+		return false;
+	}
+	return true;
+}
+
+std::string ZarReport::Summary() const {
+	std::string s = Fmt("%llu file%s", (unsigned long long)files, files == 1 ? "" : "s");
+	if (discsCompressed)
+		s += Fmt(", %d disc%s compressed first", discsCompressed, discsCompressed == 1 ? "" : "s");
+	if (discsStored)
+		s += Fmt(", %d disc%s stored", discsStored, discsStored == 1 ? "" : "s");
+	if (blocks)
+		s += Fmt(", %.0f%% of blocks stored as they are", 100.0 * storedBlocks / blocks);
+	return s;
+}
+
+// ---- Writing ----------------------------------------------------------------------------------
+
+namespace {
+
+struct OutputSink {
+	File file;
+	uint64_t offset = 0;
+	bool failed = false;
+	std::string error;
+
+	static void NewFile(int32_t, void *) {}
+	static void Write(const void *data, size_t len, void *ctx) {
+		OutputSink *o = (OutputSink *)ctx;
+		if (o->failed)
+			return;
+		if (!o->file.WriteAt(o->offset, data, len)) {
+			o->failed = true;
+			o->error = o->file.LastError();
+			return;
+		}
+		o->offset += len;
+	}
+};
+
+// archivePath with the new format's name: "Game.iso" -> "Game.cso", or "Game/EBOOT.PBP".
+std::string CompressedName(const std::string &archivePath, Format target, const Settings &s) {
+	size_t slash = archivePath.rfind('/');
+	std::string dir = slash == std::string::npos ? "" : archivePath.substr(0, slash + 1);
+	std::string name = archivePath.substr(dir.size());
+	size_t dot = name.rfind('.');
+	std::string stem = dot == std::string::npos || dot == 0 ? name : name.substr(0, dot);
+	if (target == Format::PBP && s.pbp.layout == PbpLayout::Folder)
+		return dir + stem + "/EBOOT.PBP";
+	return dir + stem + FormatExtension(target);
+}
+
+}  // namespace
+
+bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, const Settings &s, const std::string &outPath,
+	OpContext &ctx, ZarProgress &progress, ZarReport *report) {
+	const ZarSettings &z = s.zar;
+	auto fail = [&](const std::string &msg) {
+		if (ctx.error.empty())
+			ctx.error = msg;
+		return false;
+	};
+	auto cancelled = [&] {
+		if (ctx.Cancelled()) {
+			ctx.cancelled = true;
+			fail("cancelled");
+			return true;
+		}
+		return false;
+	};
+
+	OutputSink sink;
+	if (!sink.file.Open(outPath, File::Write))
+		return fail(outPath + ": " + sink.file.LastError());
+	ZArchiveWriter w(&OutputSink::NewFile, &OutputSink::Write, &sink);
+	w.SetCompressionLevel(z.level);
+	w.SetPrecheck(z.precheck);
+	w.SetThreads(s.engine.threads);
+
+	// Names already used, for the compressed discs' new names.
+	std::set<std::string> used;
+	for (const ZarEntry &e : entries)
+		used.insert(KeyOf(e.archivePath));
+
+	uint64_t total = 0;
+	for (const ZarEntry &e : entries)
+		total += e.size;
+	total = std::max<uint64_t>(total, 1);
+	uint64_t done = 0;
+	auto report01 = [&](uint64_t cur, double f) {
+		if (ctx.progress)
+			ctx.progress(std::min(1.0, ((double)done + (double)cur * f) / (double)total));
+	};
+
+	// 1 MB pieces: at zstd 22 a piece takes a fraction of a second, so progress keeps moving.
+	std::vector<uint8_t> buf(1u << 20);
+	// Appends a whole buffer in pieces (progress, cancel, write errors). f0..f1 = the part of
+	// this file's weight it covers.
+	auto appendMem = [&](const uint8_t *data, uint64_t size, StreamHash &h, uint64_t weight, double f0, double f1) {
+		for (uint64_t pos = 0; pos < size;) {
+			if (cancelled())
+				return false;
+			size_t n = (size_t)std::min<uint64_t>(buf.size(), size - pos);
+			w.AppendData(data + pos, n);
+			h.Update(data + pos, n);
+			pos += n;
+			if (sink.failed)
+				return fail("writing the archive: " + sink.error);
+			report01(weight, f0 + (f1 - f0) * (double)pos / (double)size);
+		}
+		return true;
+	};
+	auto appendFile = [&](const std::string &path, StreamHash &h, uint64_t weight, double f0, double f1, uint64_t *size) {
+		File f;
+		if (!f.Open(path, File::Read))
+			return fail(path + ": " + f.LastError());
+		const uint64_t n = f.Size();
+		*size = n;
+		for (uint64_t pos = 0; pos < n;) {
+			if (cancelled())
+				return false;
+			size_t k = (size_t)std::min<uint64_t>(buf.size(), n - pos);
+			if (!f.ReadExact(pos, buf.data(), k))
+				return fail(path + ": " + f.LastError());
+			w.AppendData(buf.data(), k);
+			h.Update(buf.data(), k);
+			pos += k;
+			if (sink.failed)
+				return fail("writing the archive: " + sink.error);
+			report01(weight, f0 + (f1 - f0) * (double)pos / (double)std::max<uint64_t>(n, 1));
+		}
+		return true;
+	};
+
+	const Format discTarget = z.discFormat;
+	for (const ZarEntry &e : entries) {
+		if (cancelled())
+			return false;
+		if (e.isDir) {
+			if (!w.MakeDir(e.archivePath.c_str(), true))
+				return fail("can't create folder " + e.archivePath + " in the archive");
+			continue;
+		}
+		ZarWritten written;
+		StreamHash h;
+		bool handled = false;
+
+		// A plain ISO compressed first: into RAM, or a temporary file when it doesn't fit.
+		if (z.compressDiscs && e.disc == Format::ISO && FormatAvailable(discTarget) && discTarget != Format::ISO) {
+			ImageInfo info = InspectImage(e.source);
+			if (std::string why = TargetRejects(discTarget, info.platform); !why.empty()) {
+				Log(LogLevel::Warning, Fmt("%s: %s, adding the ISO as it is", e.source.c_str(), why.c_str()));
+			} else {
+				const std::string name = Unique(CompressedName(e.archivePath, discTarget, s), used);
+				if (progress.onPhase)
+					progress.onPhase(true, name);
+				Clock::time_point t0 = Clock::now();
+				FileImageReader iso;
+				if (!iso.Open(e.source))
+					return fail(iso.Error());
+				OpContext sub;
+				sub.cancel = ctx.cancel;
+				sub.progress = [&](double f) { report01(e.size, 0.9 * f); };
+				MemoryOutput mem(ctx.cancel);
+				bool inRam = CompressToMemory(iso, discTarget, s, mem, sub);
+				if (!inRam && sub.Cancelled()) {
+					ctx.cancelled = true;
+					return fail("cancelled");
+				}
+				// A library may write past the budget only at its very end; anything else is an error.
+				if (!inRam && !mem.OutOfMemory())
+					return fail(Fmt("compressing %s to %s: %s", e.source.c_str(), FormatName(discTarget), sub.error.c_str()));
+				if (progress.onPhase)
+					progress.onPhase(false, name);
+				// Game/EBOOT.PBP needs its folder.
+				if (size_t slash = name.rfind('/'); slash != std::string::npos && !w.MakeDir(name.substr(0, slash).c_str(), true))
+					return fail("can't create folder " + name.substr(0, slash) + " in the archive");
+				if (!w.StartNewFile(name.c_str(), false))
+					return fail("can't add " + name + " to the archive");
+				if (inRam) {
+					report->compressDiscSecs += SecondsSince(t0);
+					if (!appendMem(mem.Data(), mem.Size(), h, e.size, 0.9, 1.0))
+						return false;
+					written.size = mem.Size();
+				} else {
+					mem.Free();
+					Log(LogLevel::Warning, Fmt("%s: %s, compressing through a temporary file", e.source.c_str(), mem.Error().c_str()));
+					fs::path tdir = s.engine.tempDir.empty() ? U8Path(outPath).parent_path() : U8Path(s.engine.tempDir);
+					std::error_code ec;
+					fs::create_directories(tdir, ec);
+					const std::string temp = PathU8(tdir / U8Path(GameName(e.source) + ".isopk-temp" + FormatExtension(discTarget)));
+					OpContext sub2;
+					sub2.cancel = ctx.cancel;
+					sub2.progress = [&](double f) { report01(e.size, 0.8 * f); };
+					bool ok = CompressFile(e.source, discTarget, s, temp, sub2);
+					if (!ok) {
+						fs::remove(U8Path(temp), ec);
+						if (sub2.Cancelled()) {
+							ctx.cancelled = true;
+							return fail("cancelled");
+						}
+						return fail(Fmt("compressing %s to %s: %s", e.source.c_str(), FormatName(discTarget), sub2.error.c_str()));
+					}
+					report->compressDiscSecs += SecondsSince(t0);
+					uint64_t n = 0;
+					ok = appendFile(temp, h, e.size, 0.8, 1.0, &n);
+					fs::remove(U8Path(temp), ec);
+					if (!ok)
+						return false;
+					written.size = n;
+					report->discsViaTemp++;
+				}
+				written.archivePath = name;
+				report->discsCompressed++;
+				handled = true;
+			}
+		}
+
+		if (!handled) {
+			const bool store = z.storeDiscs && e.disc != Format::Unknown;
+			if (progress.onPhase)
+				progress.onPhase(false, e.archivePath);
+			if (!w.StartNewFile(e.archivePath.c_str(), !store))
+				return fail("can't add " + e.archivePath + " to the archive");
+			uint64_t n = 0;
+			if (!appendFile(e.source, h, e.size, 0.0, 1.0, &n))
+				return false;
+			written.archivePath = e.archivePath;
+			written.size = n;
+			if (store)
+				report->discsStored++;
+		}
+		written.hash = h.Final();
+		report->written.push_back(written);
+		report->files++;
+		report->inputBytes += e.size;
+		done += e.size;
+		report01(0, 0);
+	}
+	if (cancelled())
+		return false;
+	if (progress.onPhase)
+		progress.onPhase(false, "");
+	w.Finalize();
+	if (sink.failed)
+		return fail("writing the archive: " + sink.error);
+	ZArchiveWriter::Stats st = w.GetStats();
+	report->blocks = st.blocks;
+	report->storedBlocks = st.storedBlocks;
+	report->precheckSkipped = st.precheckSkipped;
+	sink.file.Close();
+	if (ctx.progress)
+		ctx.progress(1.0);
+	return true;
+}
+
+bool VerifyZArchive(const std::string &path, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict) {
+	std::unique_ptr<ZArchiveReader> r(ZArchiveReader::OpenFromFile(U8Path(path)));
+	if (!r) {
+		*verdict = "the archive doesn't open";
+		return false;
+	}
+	uint64_t total = 0, done = 0;
+	for (auto &x : written)
+		total += x.size;
+	total = std::max<uint64_t>(total, 1);
+	std::vector<uint8_t> buf(4u << 20);
+	for (const ZarWritten &x : written) {
+		ZArchiveNodeHandle h = r->LookUp(x.archivePath, true, false);
+		if (h == ZARCHIVE_INVALID_NODE) {
+			*verdict = x.archivePath + " missing";
+			return false;
+		}
+		if (r->GetFileSize(h) != x.size) {
+			*verdict = x.archivePath + ": wrong size";
+			return false;
+		}
+		StreamHash hash;
+		for (uint64_t pos = 0; pos < x.size;) {
+			if (ctx.Cancelled()) {
+				ctx.cancelled = true;
+				ctx.error = "cancelled";
+				return false;
+			}
+			uint64_t n = r->ReadFromFile(h, pos, std::min<uint64_t>(buf.size(), x.size - pos), buf.data());
+			if (n == 0) {
+				*verdict = x.archivePath + ": read failed at " + std::to_string(pos);
+				return false;
+			}
+			hash.Update(buf.data(), (size_t)n);
+			pos += n;
+			if (ctx.progress)
+				ctx.progress((double)(done + pos) / (double)total);
+		}
+		if (hash.Final() != x.hash) {
+			*verdict = x.archivePath + " differs";
+			return false;
+		}
+		done += x.size;
+	}
+	*verdict = "OK";
+	return true;
+}
+
+}  // namespace isopk

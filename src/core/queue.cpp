@@ -46,6 +46,23 @@ std::shared_ptr<Job> JobQueue::Add(const InputFile &input, Format target) {
 	return job;
 }
 
+std::shared_ptr<Job> JobQueue::AddZArchive(const ZarSpec &spec) {
+	auto job = std::make_shared<Job>();
+	job->zar = std::make_shared<const ZarSpec>(spec);
+	std::vector<std::string> paths = spec.Paths();
+	job->input.path = paths.empty() ? spec.name : paths.front();
+	job->input.size = spec.totalSize;
+	job->input.format = Format::Unknown;
+	job->target = Format::ZAR;
+	{
+		std::lock_guard<std::mutex> g(mutex_);
+		job->settings = settings_;
+		jobs_.push_back(job);
+	}
+	cv_.notify_all();
+	return job;
+}
+
 void JobQueue::Remove(const std::shared_ptr<Job> &job) {
 	job->cancel = true;
 	std::lock_guard<std::mutex> g(mutex_);

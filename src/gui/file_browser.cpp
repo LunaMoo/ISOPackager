@@ -93,7 +93,7 @@ void FileBrowser::Refresh() {
 		e.dir = it->is_directory(ec2);
 		if (!e.dir) {
 			e.image = IsImageExtension(ToLower(PathU8(it->path().extension())));
-			if (mode_ == PickFolder || (!e.image && !showAll_))
+			if (mode_ == PickFolder || (mode_ == PickFiles && !e.image && !showAll_))
 				continue;
 			e.size = it->file_size(ec2);
 		}
@@ -182,7 +182,7 @@ bool FileBrowser::Draw() {
 				if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
 					if (e.dir)
 						navigateTo = PathU8(U8Path(dir_) / U8Path(e.name));
-					else if (mode_ == PickFiles) {
+					else if (mode_ == PickFiles || mode_ == PickAny) {
 						result_ = { PathU8(U8Path(dir_) / U8Path(e.name)) };
 						confirmed = true;
 					}
@@ -190,7 +190,7 @@ bool FileBrowser::Draw() {
 					int a = std::min<int>(lastClicked_, (int)i), b = std::max<int>(lastClicked_, (int)i);
 					for (int k = a; k <= b; ++k)
 						selected_[k] = true;
-				} else if (io.KeyCtrl || mode_ == PickFiles) {
+				} else if (io.KeyCtrl || mode_ == PickFiles || mode_ == PickAny) {
 					selected_[i] = !selected_[i];
 					lastClicked_ = (int)i;
 				} else {
@@ -206,7 +206,7 @@ bool FileBrowser::Draw() {
 		ImGui::EndTable();
 	}
 	if (entries_.empty())
-		ImGui::TextDisabled(mode_ == PickFolder ? "(no subfolders)" : "(no disc images here)");
+		ImGui::TextDisabled(mode_ == PickFolder ? "(no subfolders)" : mode_ == PickAny ? "(empty folder)" : "(no disc images here)");
 	ImGui::EndChild();
 	if (!navigateTo.empty())
 		Navigate(navigateTo);
@@ -214,11 +214,14 @@ bool FileBrowser::Draw() {
 	if (!error_.empty())
 		ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", error_.c_str());
 	int count = (int)std::count(selected_.begin(), selected_.end(), true);
-	if (mode_ == PickFiles) {
+	if (mode_ == PickFiles || mode_ == PickAny) {
 		ImGui::Text("%d selected (click to select several; double-click a folder to open it)", count);
-		if (ImGui::Button("Select all images")) {
+		if (mode_ == PickFiles && ImGui::Button("Select all images")) {
 			for (size_t i = 0; i < entries_.size(); ++i)
 				selected_[i] = entries_[i].image;
+		}
+		if (mode_ == PickAny && ImGui::Button("Select all")) {
+			std::fill(selected_.begin(), selected_.end(), true);
 		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(count == 0);

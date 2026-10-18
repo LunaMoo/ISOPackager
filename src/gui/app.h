@@ -41,7 +41,7 @@ public:
 
 	// Files dropped on the window or passed on the command line.
 	void AddPaths(const std::vector<std::string> &paths);
-	// Command line: [--to FMT] [--start] [files...]
+	// Command line: [--to FMT] [--start] [--zar FOLDER] [files...]
 	void HandleArgs(const std::vector<std::string> &args);
 	void Frame();
 
@@ -75,6 +75,11 @@ private:
 	void DrawStatusBar();
 	void DrawModals();
 	void DrawBenchChart(float height);
+	void DrawZarSection(bool open, bool *changed);
+	// "Create ZArchive": pick a folder, then name it (and optionally add more) in a dialog.
+	void StartCreateZar(const std::string &folder = "");  // empty: ask for the folder
+	void DrawZarDialog();
+	void MeasureZarAsync(const ZarSpec &spec, bool forQueue);
 
 	void PickFiles(std::function<void(const std::vector<std::string> &)> then);
 	void PickFolder(std::function<void(const std::string &)> then);
@@ -136,6 +141,19 @@ private:
 	std::string benchWhat_;
 	double benchStep_ = 0, benchTotal_ = 0;
 	int benchChartX_ = 0;  // 0 compress MB/s, 1 decode s, 2 random read ms
+
+	// Create ZArchive dialog. Sizes are measured off the UI thread.
+	struct ZarDialog {
+		bool requestOpen = false;
+		ZarSpec spec;
+		int generation = 0;        // bumped when the contents change
+		int measuredGeneration = -1;
+		uint64_t size = 0;
+		std::string error;
+		bool open = false;  // the popup is showing this frame
+	};
+	ZarDialog zarDlg_;
+	std::vector<ZarSpec> zarReady_;  // measured, to be queued (guarded by scanMutex_)
 
 	// UI.
 	FileBrowser browser_;

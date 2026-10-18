@@ -338,6 +338,102 @@ void RamBudget::Release(uint64_t n) {
 
 // ---- MemoryImage ------------------------------------------------------------------------------
 
+// ---- MemoryOutput --------------------------------------------------------------------------------
+
+MemoryOutput::~MemoryOutput() {
+	Free();
+}
+
+void MemoryOutput::Free() {
+	std::unique_lock<std::shared_mutex> g(mutex_);
+	data_.reset();
+	if (reserved_)
+		RamBudget::Get().Release(reserved_);
+	reserved_ = capacity_ = 0;
+	end_ = 0;
+}
+
+bool MemoryOutput::Grow(uint64_t need) {
+	if (need <= capacity_)
+		return true;
+	uint64_t cap = std::max<uint64_t>(need, capacity_ + capacity_ / 2);
+	cap = std::max<uint64_t>(cap, 1u << 20);
+	if (cap > (uint64_t)SIZE_MAX) {
+		oom_ = true;
+		error_ = "image too large for this platform's address space";
+		return false;
+	}
+	const uint64_t more = cap - reserved_;
+	if (!RamBudget::Get().Acquire(more, cancel_)) {
+		oom_ = true;
+		error_ = Fmt("%s doesn't fit the RAM budget (%s)", HumanBytes(cap).c_str(), HumanBytes(RamBudget::Get().Capacity()).c_str());
+		return false;
+	}
+	std::unique_ptr<uint8_t[]> bigger(new (std::nothrow) uint8_t[(size_t)cap]);
+	if (!bigger) {
+		RamBudget::Get().Release(more);
+		oom_ = true;
+		error_ = Fmt("could not allocate %s", HumanBytes(cap).c_str());
+		return false;
+	}
+	const uint64_t used = end_.load();
+	if (data_ && used)
+		memcpy(bigger.get(), data_.get(), (size_t)used);
+	data_ = std::move(bigger);
+	reserved_ += more;
+	capacity_ = cap;
+	return true;
+}
+
+bool MemoryOutput::Begin(uint64_t sizeHint) {
+	std::unique_lock<std::shared_mutex> g(mutex_);
+	oom_ = false;
+	return Grow(sizeHint);
+}
+
+bool MemoryOutput::WriteAt(uint64_t offset, const void *data, size_t len) {
+	if (cancel_ && cancel_->load()) {
+		error_ = "cancelled";
+		return false;
+	}
+	const uint64_t need = offset + len;
+	{
+		std::shared_lock<std::shared_mutex> g(mutex_);
+		if (need <= capacity_) {
+			memcpy(data_.get() + offset, data, len);
+			uint64_t e = end_.load();
+			while (need > e && !end_.compare_exchange_weak(e, need)) {
+			}
+			return true;
+		}
+	}
+	std::unique_lock<std::shared_mutex> g(mutex_);
+	if (!Grow(need))
+		return false;
+	memcpy(data_.get() + offset, data, len);
+	if (need > end_.load())
+		end_ = need;
+	return true;
+}
+
+size_t MemoryOutput::ReadAt(uint64_t offset, void *buf, size_t len) {
+	std::shared_lock<std::shared_mutex> g(mutex_);
+	const uint64_t end = end_.load();
+	if (offset >= end)
+		return 0;
+	size_t n = (size_t)std::min<uint64_t>(len, end - offset);
+	memcpy(buf, data_.get() + offset, n);
+	return n;
+}
+
+bool MemoryOutput::Finish(uint64_t finalSize) {
+	// The RAM stays reserved until Free(): the image is handed on and freed right after.
+	std::unique_lock<std::shared_mutex> g(mutex_);
+	if (finalSize != UINT64_MAX && finalSize <= capacity_)
+		end_ = finalSize;
+	return true;
+}
+
 MemoryImage::~MemoryImage() {
 	Free();
 }
