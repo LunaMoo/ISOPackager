@@ -254,7 +254,7 @@ std::string ZarSettings::Describe() const {
 	if (precheck > 0)
 		s += Fmt(", pre-check %g%%", precheck);
 	if (compressDiscs)
-		s += Fmt(", ISOs to %s first", FormatName(discFormat));
+		s += Fmt(", discs to %s first", FormatName(discFormat));
 	if (storeDiscs)
 		s += ", discs stored";
 	return s;

@@ -237,6 +237,10 @@ std::string ZarReport::Summary() const {
 	std::string s = Fmt("%llu file%s", (unsigned long long)files, files == 1 ? "" : "s");
 	if (discsCompressed)
 		s += Fmt(", %d disc%s compressed first", discsCompressed, discsCompressed == 1 ? "" : "s");
+	if (discsConverted)
+		s += Fmt(", %d disc%s converted first", discsConverted, discsConverted == 1 ? "" : "s");
+	if (discsKept)
+		s += Fmt(", %d disc%s already in that format", discsKept, discsKept == 1 ? "" : "s");
 	if (discsStored)
 		s += Fmt(", %d disc%s stored", discsStored, discsStored == 1 ? "" : "s");
 	if (blocks)
@@ -375,31 +379,104 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 		StreamHash h;
 		bool handled = false;
 
-		// A plain ISO compressed first: into RAM, or a temporary file when it doesn't fit.
-		if (z.compressDiscs && e.disc == Format::ISO && FormatAvailable(discTarget) && discTarget != Format::ISO) {
+		// Discs converted to the chosen format first: a plain ISO is compressed, any other format is
+		// extracted to an ISO in RAM and that is compressed (also into RAM); the result goes into
+		// the archive stored. A temporary file stands in for whichever step doesn't fit the RAM budget.
+		const bool isDisc = e.disc != Format::Unknown && e.disc != Format::ZAR;
+		const bool alreadyTarget = z.compressDiscs && isDisc && e.disc == discTarget;
+		if (z.compressDiscs && isDisc && !alreadyTarget && FormatAvailable(discTarget) && discTarget != Format::ISO && FormatAvailable(e.disc)) {
 			ImageInfo info = InspectImage(e.source);
 			if (std::string why = TargetRejects(discTarget, info.platform); !why.empty()) {
-				Log(LogLevel::Warning, Fmt("%s: %s, adding the ISO as it is", e.source.c_str(), why.c_str()));
+				Log(LogLevel::Warning, Fmt("%s: %s, adding it as it is", e.source.c_str(), why.c_str()));
 			} else {
 				const std::string name = Unique(CompressedName(e.archivePath, discTarget, s), used);
 				if (progress.onPhase)
 					progress.onPhase(true, name);
 				Clock::time_point t0 = Clock::now();
-				FileImageReader iso;
-				if (!iso.Open(e.source))
-					return fail(iso.Error());
+				fs::path tdir = s.engine.tempDir.empty() ? U8Path(outPath).parent_path() : U8Path(s.engine.tempDir);
+				std::error_code ec;
+				std::vector<std::string> temps;  // removed whatever happens
+				struct TempCleanup {
+					std::vector<std::string> *list;
+					~TempCleanup() {
+						std::error_code e2;
+						for (const std::string &t : *list)
+							fs::remove(U8Path(t), e2);
+					}
+				} cleanup{ &temps };
+				auto tempPath = [&](const char *ext) {
+					fs::create_directories(tdir, ec);
+					std::string t = PathU8(tdir / U8Path(GameName(e.source) + ".isopk-temp" + ext));
+					temps.push_back(t);
+					return t;
+				};
+				auto subFailed = [&](OpContext &sub, const char *what) {
+					if (sub.Cancelled() || ctx.Cancelled()) {
+						ctx.cancelled = true;
+						return fail("cancelled");
+					}
+					return fail(Fmt("%s %s: %s", what, e.source.c_str(), sub.error.c_str()));
+				};
+				// Shares of this disc's progress: extract, compress, then storing in the archive.
+				const bool extract = e.disc != Format::ISO;
+				const double fx = extract ? 0.3 : 0.0, fc = 0.9;
+
+				// 1. The plain image.
+				FileImageReader isoFile;
+				MemoryImage isoMem(ctx.cancel);
+				ImageReader *iso = nullptr;
+				if (!extract) {
+					if (!isoFile.Open(e.source))
+						return fail(isoFile.Error());
+					iso = &isoFile;
+				} else {
+					OpContext sub;
+					sub.cancel = ctx.cancel;
+					sub.progress = [&](double f) { report01(e.size, fx * f); };
+					if (DecompressToWriter(e.source, e.disc, s, isoMem, s.pbp.trimOnExtract, sub)) {
+						iso = &isoMem;
+					} else if (isoMem.OutOfMemory() && !ctx.Cancelled()) {
+						Log(LogLevel::Warning, Fmt("%s: %s, extracting to a temporary ISO", e.source.c_str(), isoMem.Error().c_str()));
+						isoMem.Free();
+						const std::string tiso = tempPath(".iso");
+						OpContext sub2;
+						sub2.cancel = ctx.cancel;
+						sub2.progress = sub.progress;
+						if (!DecompressToFile(e.source, e.disc, s, tiso, s.pbp.trimOnExtract, sub2))
+							return subFailed(sub2, "extracting");
+						if (!isoFile.Open(tiso))
+							return fail(isoFile.Error());
+						iso = &isoFile;
+						report->discsViaTemp++;
+					} else {
+						return subFailed(sub, "extracting");
+					}
+				}
+
+				// 2. The new format, in RAM.
 				OpContext sub;
 				sub.cancel = ctx.cancel;
-				sub.progress = [&](double f) { report01(e.size, 0.9 * f); };
+				sub.progress = [&](double f) { report01(e.size, fx + (fc - fx) * f); };
 				MemoryOutput mem(ctx.cancel);
-				bool inRam = CompressToMemory(iso, discTarget, s, mem, sub);
-				if (!inRam && sub.Cancelled()) {
-					ctx.cancelled = true;
-					return fail("cancelled");
+				bool inRam = CompressToMemory(*iso, discTarget, s, mem, sub);
+				std::string tempOut;
+				if (!inRam) {
+					if (!mem.OutOfMemory() || ctx.Cancelled())
+						return subFailed(sub, (std::string("compressing to ") + FormatName(discTarget)).c_str());
+					mem.Free();
+					Log(LogLevel::Warning, Fmt("%s: %s, compressing through a temporary file", e.source.c_str(), mem.Error().c_str()));
+					tempOut = tempPath(FormatExtension(discTarget));
+					OpContext sub2;
+					sub2.cancel = ctx.cancel;
+					sub2.progress = sub.progress;
+					if (!CompressImage(*iso, discTarget, s, tempOut, sub2))
+						return subFailed(sub2, (std::string("compressing to ") + FormatName(discTarget)).c_str());
+					report->discsViaTemp++;
 				}
-				// A library may write past the budget only at its very end; anything else is an error.
-				if (!inRam && !mem.OutOfMemory())
-					return fail(Fmt("compressing %s to %s: %s", e.source.c_str(), FormatName(discTarget), sub.error.c_str()));
+				isoMem.Free();  // the plain image isn't needed any more: give its RAM back
+				report->compressDiscSecs += SecondsSince(t0);
+
+				// 3. Into the archive, stored.
 				if (progress.onPhase)
 					progress.onPhase(false, name);
 				// Game/EBOOT.PBP needs its folder.
@@ -408,46 +485,27 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 				if (!w.StartNewFile(name.c_str(), false))
 					return fail("can't add " + name + " to the archive");
 				if (inRam) {
-					report->compressDiscSecs += SecondsSince(t0);
-					if (!appendMem(mem.Data(), mem.Size(), h, e.size, 0.9, 1.0))
+					if (!appendMem(mem.Data(), mem.Size(), h, e.size, fc, 1.0))
 						return false;
 					written.size = mem.Size();
 				} else {
-					mem.Free();
-					Log(LogLevel::Warning, Fmt("%s: %s, compressing through a temporary file", e.source.c_str(), mem.Error().c_str()));
-					fs::path tdir = s.engine.tempDir.empty() ? U8Path(outPath).parent_path() : U8Path(s.engine.tempDir);
-					std::error_code ec;
-					fs::create_directories(tdir, ec);
-					const std::string temp = PathU8(tdir / U8Path(GameName(e.source) + ".isopk-temp" + FormatExtension(discTarget)));
-					OpContext sub2;
-					sub2.cancel = ctx.cancel;
-					sub2.progress = [&](double f) { report01(e.size, 0.8 * f); };
-					bool ok = CompressFile(e.source, discTarget, s, temp, sub2);
-					if (!ok) {
-						fs::remove(U8Path(temp), ec);
-						if (sub2.Cancelled()) {
-							ctx.cancelled = true;
-							return fail("cancelled");
-						}
-						return fail(Fmt("compressing %s to %s: %s", e.source.c_str(), FormatName(discTarget), sub2.error.c_str()));
-					}
-					report->compressDiscSecs += SecondsSince(t0);
 					uint64_t n = 0;
-					ok = appendFile(temp, h, e.size, 0.8, 1.0, &n);
-					fs::remove(U8Path(temp), ec);
-					if (!ok)
+					if (!appendFile(tempOut, h, e.size, fc, 1.0, &n))
 						return false;
 					written.size = n;
-					report->discsViaTemp++;
 				}
 				written.archivePath = name;
-				report->discsCompressed++;
+				if (extract)
+					report->discsConverted++;
+				else
+					report->discsCompressed++;
 				handled = true;
 			}
 		}
 
 		if (!handled) {
-			const bool store = z.storeDiscs && e.disc != Format::Unknown;
+			// Already in the chosen format: it's compressed, so it's stored like the converted ones.
+			const bool store = (z.storeDiscs && e.disc != Format::Unknown) || alreadyTarget;
 			if (progress.onPhase)
 				progress.onPhase(false, e.archivePath);
 			if (!w.StartNewFile(e.archivePath.c_str(), !store))
@@ -457,7 +515,9 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 				return false;
 			written.archivePath = e.archivePath;
 			written.size = n;
-			if (store)
+			if (alreadyTarget)
+				report->discsKept++;
+			else if (store)
 				report->discsStored++;
 		}
 		written.hash = h.Final();

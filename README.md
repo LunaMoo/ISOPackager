@@ -45,10 +45,12 @@ Built on these libraries, linked statically from the submodules in `external/`:
   first tried at zstd's fastest level, and blocks that don't get below 95% are stored as they are,
   so already compressed games (CSO, CHD, RVZ…) cost almost no time and read back without a second
   decompression. Settings > ZArchive also has "Don't compress game discs" (for games already in
-  compressed formats) and "Compress the game discs before adding them" with a format: plain ISOs
-  are compressed **in RAM** through the libraries' writer callbacks and the result goes straight
-  into the archive, stored uncompressed (through a temporary file only when the RAM budget is too
-  small). Verify reads every file back from the finished archive and compares it with what went in.
+  compressed formats) and "Compress (or convert) the game discs before adding them" with a format:
+  every disc ends up in that format — plain ISOs are compressed **in RAM** through the libraries'
+  writer callbacks, discs in another format (a PBP, a CHD…) are extracted to an ISO in RAM and
+  compressed from there, also into RAM — and the result goes straight into the archive, stored
+  (a temporary file stands in only for a step that doesn't fit the RAM budget; discs already in
+  that format go in as they are). Verify reads every file back from the finished archive and compares it with what went in.
 - **Extract ZArchives**: a `.zar` dropped on the window, added with Add files or found by Add
   folder is queued as ZAR → *folder*, and unpacked next to itself into a folder named after it
   (`Game.zar` → `Game/`), then verified. An existing folder is skipped, renamed (`Game (2)`) or,

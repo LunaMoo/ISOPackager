@@ -224,10 +224,11 @@ void App::DrawZarSection(bool open, bool *changed) {
 		ImGui::SameLine();
 		ImGui::TextDisabled("(the pre-check already catches most compressed discs)");
 	}
-	*changed |= ImGui::Checkbox("Compress the game discs before adding them", &z.compressDiscs);
-	Tip("Plain ISOs are compressed by ISOPackager first, in RAM (through a temporary file when the RAM budget is too small), and the "
-		"result goes into the archive uncompressed. Images already in a compressed format go in as they are. The chosen format's own "
-		"settings above apply.");
+	*changed |= ImGui::Checkbox("Compress (or convert) the game discs before adding them", &z.compressDiscs);
+	Tip("Every disc goes into the archive in the chosen format: plain ISOs are compressed, discs in another format (PBP, CHD, CSO...) are "
+		"extracted to an ISO in RAM and compressed from there, also into RAM, and the result is stored in the archive without a second "
+		"compression. Discs already in that format go in as they are. A temporary file stands in for a step that doesn't fit the RAM "
+		"budget. The chosen format's own settings above apply.");
 	if (z.compressDiscs) {
 		ImGui::SameLine();
 		ImGui::SetNextItemWidth(em * 6.5f);

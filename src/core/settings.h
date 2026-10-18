@@ -100,7 +100,7 @@ struct ZarSettings {
 	int level = 22;            // zstd 1..22, highest by default
 	double precheck = 95.0;    // store blocks zstd's fastest level can't get below this % (0 = always try)
 	bool storeDiscs = false;   // don't compress disc images at all (they're already CSO/CHD/...)
-	bool compressDiscs = false;  // compress plain ISOs with ISOPackager first (in RAM), then store them
+	bool compressDiscs = false;  // put every disc in discFormat first (ISOs compressed, others converted, in RAM), then store them
 	Format discFormat = FormatAvailable(Format::CSO) ? Format::CSO : Format::CHD;
 	std::string Describe() const;
 };

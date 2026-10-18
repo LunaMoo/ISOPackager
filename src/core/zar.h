@@ -53,7 +53,8 @@ struct ZarWritten {
 // What happened, for the queue and the log.
 struct ZarReport {
 	uint64_t files = 0, inputBytes = 0, blocks = 0, storedBlocks = 0, precheckSkipped = 0;
-	int discsCompressed = 0, discsViaTemp = 0, discsStored = 0;
+	// compressed: from ISO; converted: from another format; kept: already in the chosen format
+	int discsCompressed = 0, discsConverted = 0, discsKept = 0, discsViaTemp = 0, discsStored = 0;
 	double compressDiscSecs = 0;
 	std::vector<ZarWritten> written;
 	std::string Summary() const;  // "3 files, 2 discs compressed first, 81% of blocks stored"

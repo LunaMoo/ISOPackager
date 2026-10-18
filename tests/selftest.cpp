@@ -482,6 +482,13 @@ int main(int argc, char **argv) {
 		WriteAll(PathU8(game / "Test Game.iso"), iso);
 		std::vector<uint8_t> csoBytes = outputs.empty() ? std::vector<uint8_t>() : ReadAll(outputs.front());
 		WriteAll(PathU8(game / "Disc 2.cso"), csoBytes);
+		// A PBP too: "compress the discs" converts it, through an ISO in RAM.
+		std::vector<uint8_t> pbpBytes;
+		for (const std::string &o : outputs)
+			if (pbpBytes.empty() && ToLower(PathU8(U8Path(o).extension())) == ".pbp")
+				pbpBytes = ReadAll(o);
+		CHECK(!pbpBytes.empty(), "no PBP output to test with");
+		WriteAll(PathU8(game / "Disc 3.pbp"), pbpBytes);
 		std::vector<uint8_t> gc = testiso::MakeGameCubeDisc(8);
 		WriteAll(PathU8(game / "Bonus GC.iso"), gc);
 		std::vector<uint8_t> dlc;
@@ -498,8 +505,9 @@ int main(int argc, char **argv) {
 		Settings zs = base;
 		zs.zar = ZarSettings();
 
+		// disc2 / disc3: what Disc 2.cso and Disc 3.pbp are called in the archive (unchanged unless converted).
 		auto check = [&](const JobResult &r, const char *label, const std::string &discName, const std::vector<uint8_t> *discBytes,
-						 const char *gcName = "Bonus GC.iso") {
+						 const char *gcName = "Bonus GC.iso", const std::string &disc2 = "Disc 2.cso", const std::string &disc3 = "Disc 3.pbp") {
 			CHECK(r.state == JobState::Done, "%s: %s %s", label, JobStateName(r.state), r.message.c_str());
 			if (r.state != JobState::Done)
 				return;
@@ -507,8 +515,10 @@ int main(int argc, char **argv) {
 			bool found;
 			std::vector<uint8_t> d = ZarFile(r.outputPath, "DLC/ULUS99999-DLC1/data.bin", &found);
 			CHECK(found && d == dlc, "%s: DLC data", label);
-			d = ZarFile(r.outputPath, "Disc 2.cso", &found);
-			CHECK(found && d == csoBytes, "%s: stored CSO", label);
+			d = ZarFile(r.outputPath, disc2, &found);
+			CHECK(found && (disc2 != "Disc 2.cso" || d == csoBytes), "%s: %s", label, disc2.c_str());
+			d = ZarFile(r.outputPath, disc3, &found);
+			CHECK(found && (disc3 != "Disc 3.pbp" || d == pbpBytes), "%s: %s", label, disc3.c_str());
 			d = ZarFile(r.outputPath, gcName, &found);
 			CHECK(found && (strcmp(gcName, "Bonus GC.iso") != 0 || d == gc), "%s: GameCube disc %s", label, gcName);
 			std::unique_ptr<ZArchiveReader> zr(ZArchiveReader::OpenFromFile(U8Path(r.outputPath)));
@@ -597,33 +607,40 @@ int main(int argc, char **argv) {
 		st.zar.level = 3;
 		r = MakeZar(spec, st, zdir);
 		check(r, "discs stored, level 3", "Test Game.iso", &iso);
-		CHECK(r.message.find("3 discs stored") != std::string::npos, "store-only: %s", r.message.c_str());
+		CHECK(r.message.find("4 discs stored") != std::string::npos, "store-only: %s", r.message.c_str());
 
-		std::vector<std::pair<Format, std::string>> firsts;
+		// Every disc in the chosen format: the ISOs compressed, the CSO / PBP converted through RAM,
+		// discs already in that format left alone, and each converted one must give the ISO back.
+		std::vector<Format> firsts;
 #ifdef ISOPK_WITH_CSO
-		firsts.push_back({ Format::CSO, "Test Game.cso" });
+		firsts.push_back(Format::CSO);
 #endif
-		firsts.push_back({ Format::CHD, "Test Game.chd" });
-		firsts.push_back({ Format::PBP, "Test Game.pbp" });
-		for (auto &fp : firsts) {
+		firsts.push_back(Format::CHD);
+		firsts.push_back(Format::PBP);
+		for (Format f : firsts) {
 			Settings sc = zs;
 			sc.zar.compressDiscs = true;
-			sc.zar.discFormat = fp.first;
-			std::string label = std::string("ISOs to ") + FormatName(fp.first) + " in RAM";
+			sc.zar.discFormat = f;
+			const std::string ext = FormatExtension(f);
+			std::string label = std::string("discs to ") + FormatName(f) + " in RAM";
 			r = MakeZar(spec, sc, zdir);
 			// PBP refuses the GameCube disc; the other formats compress it too.
-			const std::string gcName = fp.first == Format::PBP ? std::string("Bonus GC.iso") : "Bonus GC" + std::string(FormatExtension(fp.first));
-			check(r, label.c_str(), fp.second, nullptr, gcName.c_str());
-			checkDisc(r, label.c_str(), fp.second, fp.first);
-			if (fp.first == Format::PBP) {
-				// PBP takes only PSP games: the GameCube disc went in as it was (checked above).
-				CHECK(r.message.find("1 disc compressed first") != std::string::npos, "pbp: %s", r.message.c_str());
-			} else {
-				CHECK(r.message.find("2 discs compressed first") != std::string::npos, "%s: %s", label.c_str(), r.message.c_str());
-			}
+			const std::string gcName = f == Format::PBP ? std::string("Bonus GC.iso") : "Bonus GC" + ext;
+			const std::string disc2 = f == Format::CSO ? std::string("Disc 2.cso") : "Disc 2" + ext;
+			const std::string disc3 = f == Format::PBP ? std::string("Disc 3.pbp") : "Disc 3" + ext;
+			check(r, label.c_str(), "Test Game" + ext, nullptr, gcName.c_str(), disc2, disc3);
+			checkDisc(r, label.c_str(), "Test Game" + ext, f);
+			if (f != Format::CSO)
+				checkDisc(r, (label + ", converted CSO").c_str(), disc2, f);
+			if (f != Format::PBP)
+				checkDisc(r, (label + ", converted PBP").c_str(), disc3, f);
+			const char *want = f == Format::PBP ? "1 disc compressed first, 1 disc converted first"
+				: f == Format::CHD             ? "2 discs compressed first, 2 discs converted first"
+											   : "2 discs compressed first, 1 disc converted first";
+			CHECK(r.message.find(want) != std::string::npos, "%s: %s", label.c_str(), r.message.c_str());
 		}
 
-		// Not enough RAM for the compressed disc: through a temporary file instead.
+		// Not enough RAM: temporary files instead (an ISO for the PBP / CSO, the CHD itself).
 		{
 			Settings sc = zs;
 			sc.zar.compressDiscs = true;
@@ -632,9 +649,11 @@ int main(int argc, char **argv) {
 			ApplyEngineSettings(sc.engine);
 			r = MakeZar(spec, sc, zdir);
 			ApplyEngineSettings(base.engine);
-			check(r, "CHD via temporary file", "Test Game.chd", nullptr, "Bonus GC.chd");
-			checkDisc(r, "CHD via temporary file", "Test Game.chd", Format::CHD);
-			CHECK(!fs::exists(U8Path(zdir) / "Test Game.isopk-temp.chd"), "temporary CHD left behind");
+			check(r, "CHD via temporary files", "Test Game.chd", nullptr, "Bonus GC.chd", "Disc 2.chd", "Disc 3.chd");
+			checkDisc(r, "CHD via temporary files", "Test Game.chd", Format::CHD);
+			checkDisc(r, "CHD via temporary files, converted PBP", "Disc 3.chd", Format::CHD);
+			for (auto &it : fs::directory_iterator(U8Path(zdir), ec))
+				CHECK(PathU8(it.path().filename()).find("isopk-temp") == std::string::npos, "temporary file left: %s", PathU8(it.path()).c_str());
 		}
 
 		// Picked files and folders: clashing names get renamed, the archive goes next to the first one.
