@@ -375,6 +375,10 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 			break;
 		const std::string game = GameName(in.path);
 		Format S = in.format == Format::Unknown ? DetectFormat(in.path) : in.format;
+		if (S == Format::ZAR) {  // an archive, not a disc image
+			step += cfg.cases.size();
+			continue;
+		}
 		Settings base;
 		base.engine.threads = cfg.threads;
 		base.pbp.verifyMacs = true;

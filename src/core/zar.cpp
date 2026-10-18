@@ -532,4 +532,211 @@ bool VerifyZArchive(const std::string &path, const std::vector<ZarWritten> &writ
 	return true;
 }
 
+// ---- Extracting -------------------------------------------------------------------------------
+
+namespace {
+
+// One path component as a file system name: never "." / "..", nothing a Windows path can't hold.
+std::string SafeName(std::string_view name) {
+	std::string n(name);
+	if (n.empty() || n == "." || n == "..")
+		return "_";
+#ifdef _WIN32
+	for (char &c : n)
+		if ((unsigned char)c < 32 || strchr("<>:\"|?*\\", c))
+			c = '_';
+	while (!n.empty() && (n.back() == '.' || n.back() == ' '))
+		n.back() = '_';
+	std::string stem = ToLower(n.substr(0, n.find('.')));
+	static const char *reserved[] = { "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+		"lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9" };
+	for (const char *r : reserved)
+		if (stem == r)
+			return "_" + n;
+#else
+	for (char &c : n)
+		if (c == '/' || c == '\0')
+			c = '_';
+#endif
+	return n;
+}
+
+struct TreeEntry {
+	ZArchiveNodeHandle handle;
+	std::string rel;  // relative path on disk, '/' separated
+	bool dir;
+	uint64_t size;
+};
+
+// Every node under the root, folders before what's in them.
+bool WalkTree(ZArchiveReader &r, std::vector<TreeEntry> *out, std::string *error) {
+	ZArchiveNodeHandle root = r.LookUp("", false, true);
+	if (root == ZARCHIVE_INVALID_NODE) {
+		*error = "the archive has no root folder";
+		return false;
+	}
+	std::vector<std::pair<ZArchiveNodeHandle, std::string>> stack{ { root, "" } };
+	while (!stack.empty()) {
+		auto [dir, prefix] = stack.back();
+		stack.pop_back();
+		const uint32_t n = r.GetDirEntryCount(dir);
+		for (uint32_t i = 0; i < n; ++i) {
+			ZArchiveReader::DirEntry e;
+			if (!r.GetDirEntry(dir, i, e)) {
+				*error = "a folder in the archive is damaged";
+				return false;
+			}
+			const std::string archivePath = prefix.empty() ? std::string(e.name) : prefix + "/" + std::string(e.name);
+			ZArchiveNodeHandle h = r.LookUp(archivePath, true, true);
+			if (h == ZARCHIVE_INVALID_NODE) {
+				*error = archivePath + ": can't be looked up";
+				return false;
+			}
+			TreeEntry t{ h, "", e.isDirectory, e.isDirectory ? 0 : r.GetFileSize(h) };
+			out->push_back(t);
+			out->back().rel = archivePath;  // the disk name is made in ExtractZArchive
+			if (e.isDirectory)
+				stack.push_back({ h, archivePath });
+		}
+	}
+	return true;
+}
+
+std::string DiskRel(const std::string &archivePath) {
+	std::string rel;
+	size_t start = 0;
+	while (start <= archivePath.size()) {
+		size_t slash = archivePath.find('/', start);
+		std::string_view part(archivePath.data() + start, (slash == std::string::npos ? archivePath.size() : slash) - start);
+		if (!part.empty())
+			rel += (rel.empty() ? "" : "/") + SafeName(part);
+		if (slash == std::string::npos)
+			break;
+		start = slash + 1;
+	}
+	return rel;
+}
+
+}  // namespace
+
+bool ZArchiveContents(const std::string &zarPath, uint64_t *files, uint64_t *bytes, std::string *error) {
+	std::unique_ptr<ZArchiveReader> r(ZArchiveReader::OpenFromFile(U8Path(zarPath)));
+	if (!r) {
+		*error = "not a valid ZArchive";
+		return false;
+	}
+	std::vector<TreeEntry> tree;
+	if (!WalkTree(*r, &tree, error))
+		return false;
+	*files = *bytes = 0;
+	for (const TreeEntry &t : tree)
+		if (!t.dir) {
+			++*files;
+			*bytes += t.size;
+		}
+	return true;
+}
+
+bool ExtractZArchive(const std::string &zarPath, const std::string &outDir, OpContext &ctx, std::vector<ZarWritten> *written) {
+	auto fail = [&](const std::string &msg) {
+		if (ctx.error.empty())
+			ctx.error = msg;
+		return false;
+	};
+	std::unique_ptr<ZArchiveReader> r(ZArchiveReader::OpenFromFile(U8Path(zarPath)));
+	if (!r)
+		return fail("not a valid ZArchive");
+	std::vector<TreeEntry> tree;
+	std::string err;
+	if (!WalkTree(*r, &tree, &err))
+		return fail(err);
+	uint64_t total = 0, done = 0;
+	for (const TreeEntry &t : tree)
+		total += t.size;
+	total = std::max<uint64_t>(total, 1);
+
+	const fs::path base = U8Path(outDir);
+	std::error_code ec;
+	fs::create_directories(base, ec);
+	if (ec)
+		return fail("can't create " + outDir + ": " + ec.message());
+	std::vector<uint8_t> buf(4u << 20);
+	for (const TreeEntry &t : tree) {
+		const std::string rel = DiskRel(t.rel);
+		const fs::path dst = base / U8Path(rel);
+		if (t.dir) {
+			fs::create_directories(dst, ec);
+			if (ec)
+				return fail("can't create " + PathU8(dst) + ": " + ec.message());
+			continue;
+		}
+		fs::create_directories(dst.parent_path(), ec);
+		File f;
+		if (!f.Open(PathU8(dst), File::Write))
+			return fail(PathU8(dst) + ": " + f.LastError());
+		StreamHash h;
+		for (uint64_t pos = 0; pos < t.size;) {
+			if (ctx.Cancelled()) {
+				ctx.cancelled = true;
+				return fail("cancelled");
+			}
+			uint64_t n = r->ReadFromFile(t.handle, pos, std::min<uint64_t>(buf.size(), t.size - pos), buf.data());
+			if (n == 0)
+				return fail(Fmt("%s: the archive can't be read at %llu (damaged?)", t.rel.c_str(), (unsigned long long)pos));
+			if (!f.WriteAt(pos, buf.data(), (size_t)n))
+				return fail(PathU8(dst) + ": " + f.LastError());
+			h.Update(buf.data(), (size_t)n);
+			pos += n;
+			if (ctx.progress)
+				ctx.progress((double)(done + pos) / (double)total);
+		}
+		f.Close();
+		written->push_back({ rel, t.size, h.Final() });
+		done += t.size;
+	}
+	if (ctx.progress)
+		ctx.progress(1.0);
+	return true;
+}
+
+bool VerifyExtractedZArchive(const std::string &outDir, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict) {
+	uint64_t total = 0, done = 0;
+	for (auto &x : written)
+		total += x.size;
+	total = std::max<uint64_t>(total, 1);
+	std::vector<uint8_t> buf(4u << 20);
+	for (const ZarWritten &x : written) {
+		const std::string path = PathU8(U8Path(outDir) / U8Path(x.archivePath));
+		File f;
+		if (!f.Open(path, File::Read) || f.Size() != x.size) {
+			*verdict = x.archivePath + (f.IsOpen() ? ": wrong size" : ": missing");
+			return false;
+		}
+		StreamHash h;
+		for (uint64_t pos = 0; pos < x.size;) {
+			if (ctx.Cancelled()) {
+				ctx.cancelled = true;
+				ctx.error = "cancelled";
+				return false;
+			}
+			size_t n = (size_t)std::min<uint64_t>(buf.size(), x.size - pos);
+			if (!f.ReadExact(pos, buf.data(), n)) {
+				*verdict = x.archivePath + ": " + f.LastError();
+				return false;
+			}
+			h.Update(buf.data(), n);
+			pos += n;
+			if (ctx.progress)
+				ctx.progress((double)(done + pos) / (double)total);
+		}
+		if (h.Final() != x.hash) {
+			*verdict = x.archivePath + " differs";
+			return false;
+		}
+		done += x.size;
+	}
+	*verdict = "OK";
+	return true;
+}
+
 }  // namespace isopk

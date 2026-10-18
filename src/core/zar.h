@@ -70,6 +70,17 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 // Reads every file back from the archive and compares it with what was written (by hash).
 bool VerifyZArchive(const std::string &path, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict);
 
+// ---- Extracting -------------------------------------------------------------------------------
+
+// Files and bytes inside an archive (walks its file tree, nothing is decompressed).
+bool ZArchiveContents(const std::string &zarPath, uint64_t *files, uint64_t *bytes, std::string *error);
+// Writes every folder and file of the archive under outDir (created). Names that aren't safe
+// on this system are adjusted. written gets what was written where (archivePath = the path
+// relative to outDir), for verifying. ctx.progress gets 0..1.
+bool ExtractZArchive(const std::string &zarPath, const std::string &outDir, OpContext &ctx, std::vector<ZarWritten> *written);
+// Reads the extracted files back and compares them (by hash) with what the archive held.
+bool VerifyExtractedZArchive(const std::string &outDir, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict);
+
 // A 64-bit hash of a byte stream, fed in pieces of any size (the same for any split).
 class StreamHash {
 public:

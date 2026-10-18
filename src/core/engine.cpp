@@ -10,6 +10,7 @@
 #include <chdmodern/chdmodern.h>
 #include <ipbp/ipbp.h>
 #include <irvz/irvz.h>
+#include <zarchive/zarchivecommon.h>
 #ifdef ISOPK_WITH_CSO
 #include <maxcso_capi.h>
 #endif
@@ -52,7 +53,7 @@ std::string LibraryVersions() {
 #ifdef ISOPK_WITH_CSO
 	s += Fmt("mCSO %s, ", maxcso_version());
 #endif
-	s += Fmt("CHDmodern %s, iPBP %s, iRVZ %s, ZArchive", chdm_version(), ipbp_version(), irvz_version());
+	s += Fmt("CHDmodern %s, iPBP %s, iRVZ %s, ZArchive %s", chdm_version(), ipbp_version(), irvz_version(), ZARCHIVE_VERSION);
 	return s;
 }
 
@@ -895,11 +896,150 @@ void RunZarJob(Job &job) {
 	finish(JobState::Done, "");
 }
 
+// A .zar in the queue: extracted into a folder named after it, next to it.
+void RunZarExtractJob(Job &job) {
+	const Settings &s = job.settings;
+	const InputFile &in = job.input;
+	const auto t0 = Clock::now();
+	JobResult res;
+	res.inputSize = in.size;
+	job.state = (int)JobState::Running;
+	auto finish = [&](JobState st, const std::string &msg) {
+		res.state = st;
+		if (!msg.empty())
+			res.message = msg;
+		res.seconds = SecondsSince(t0);
+		job.phase = (int)Phase::Idle;
+		if (st == JobState::Done)
+			job.overall = 1.0;
+		{
+			std::lock_guard<std::mutex> g(job.resultMutex);
+			job.result = res;
+		}
+		job.state = (int)st;
+		switch (st) {
+		case JobState::Done:
+			Log(LogLevel::Info, Fmt("Done: %s -> %s (%s)%s", in.path.c_str(), res.outputPath.c_str(), res.message.c_str(),
+				res.verify == "OK" ? ", verified" : ""));
+			break;
+		case JobState::Skipped: Log(LogLevel::Info, Fmt("Skipped: %s: %s", in.path.c_str(), res.message.c_str())); break;
+		case JobState::Cancelled: Log(LogLevel::Warning, Fmt("Cancelled: %s", in.path.c_str())); break;
+		case JobState::Failed: Log(LogLevel::Error, Fmt("Failed: %s: %s", in.path.c_str(), res.message.c_str())); break;
+		default: break;
+		}
+	};
+
+	uint64_t files = 0, bytes = 0;
+	std::string err;
+	if (!ZArchiveContents(in.path, &files, &bytes, &err))
+		return finish(JobState::Failed, err);
+	res.isoSize = bytes;
+
+	// Always next to the archive: Game.zar -> Game/
+	fs::path src = U8Path(in.path);
+	std::string final = PathU8(src.parent_path() / src.stem());
+	std::error_code ec;
+	bool intoExisting = false;
+	OutputClaim claim;
+	{
+		std::lock_guard<std::mutex> g(ClaimMutex());
+		auto taken = [&](const std::string &p) { return fs::exists(U8Path(p), ec) || Claimed().count(ClaimKey(p)) != 0; };
+		if (taken(final)) {
+			const bool busy = Claimed().count(ClaimKey(final)) != 0;
+			const bool isDir = fs::is_directory(U8Path(final), ec);
+			if (s.out.conflict == Conflict::Skip && !busy)
+				return finish(JobState::Skipped, "folder exists: " + final);
+			if (s.out.conflict == Conflict::Overwrite && !busy && isDir) {
+				intoExisting = true;  // files of the same name are replaced, others kept
+			} else {
+				const std::string stem = final;
+				for (int i = 2; i < 10000 && taken(final); ++i)
+					final = stem + Fmt(" (%d)", i);
+			}
+		}
+		claim.Take(final);
+	}
+	res.outputPath = final;
+	const std::string work = intoExisting ? final : final + ".isopk-part";
+	auto removeWork = [&] {
+		if (!intoExisting)
+			fs::remove_all(U8Path(work), ec);
+	};
+	removeWork();
+	uint64_t freeSpace = FreeDiskSpace(in.path);
+	if (freeSpace != UINT64_MAX && freeSpace < bytes)
+		Log(LogLevel::Warning, Fmt("%s: needs %s, only %s free", in.path.c_str(), HumanBytes(bytes).c_str(), HumanBytes(freeSpace).c_str()));
+
+	Plan plan;
+	plan.phases.push_back({ Phase::Extracting, 1.0 });
+	if (s.engine.verify)
+		plan.phases.push_back({ Phase::Verifying, 0.3 });
+	OpContext ctx;
+	ctx.cancel = &job.cancel;
+	Phase cur = Phase::Extracting;
+	auto enter = [&](Phase p) {
+		cur = p;
+		job.phase = (int)p;
+		job.phaseProgress = 0.0;
+		job.overall = plan.Overall(p, 0.0);
+	};
+	ctx.progress = [&](double f) {
+		job.phaseProgress = f;
+		job.overall = plan.Overall(cur, f);
+	};
+	auto fail = [&](const std::string &what) {
+		removeWork();
+		if (ctx.cancelled || job.cancel.load())
+			return finish(JobState::Cancelled, "cancelled");
+		return finish(JobState::Failed, what.empty() ? ctx.error : what + ": " + ctx.error);
+	};
+
+	Log(LogLevel::Info, Fmt("Start: %s (ZAR, %llu files, %s) -> %s", in.path.c_str(), (unsigned long long)files, HumanBytes(bytes).c_str(), final.c_str()));
+	enter(Phase::Extracting);
+	std::vector<ZarWritten> written;
+	Clock::time_point tx = Clock::now();
+	if (!ExtractZArchive(in.path, work, ctx, &written))
+		return fail("extracting");
+	res.extractSecs = SecondsSince(tx);
+	if (s.engine.verify) {
+		Clock::time_point tv = Clock::now();
+		enter(Phase::Verifying);
+		std::string verdict;
+		if (!VerifyExtractedZArchive(work, written, ctx, &verdict)) {
+			res.verify = verdict.empty() ? ctx.error : verdict;
+			if (!verdict.empty())
+				ctx.error = verdict;
+			return fail("verify failed");
+		}
+		res.verifySecs = SecondsSince(tv);
+		res.verify = "OK";
+	} else {
+		res.verify = "off";
+	}
+	enter(Phase::Finishing);
+	if (!intoExisting) {
+		fs::rename(U8Path(work), U8Path(final), ec);
+		if (ec) {
+			removeWork();
+			return finish(JobState::Failed, "can't rename the output folder: " + ec.message());
+		}
+	}
+	res.outputSize = bytes;
+	res.message = Fmt("%llu file%s", (unsigned long long)files, files == 1 ? "" : "s");
+	if (s.out.deleteSource && (res.verify == "OK" || !s.engine.verify)) {
+		RemoveFile(in.path);
+		res.message += ", source deleted";
+	}
+	finish(JobState::Done, "");
+}
+
 }  // namespace
 
 void RunJob(Job &job) {
 	if (job.zar)
 		return RunZarJob(job);
+	if (job.input.format == Format::ZAR || (job.input.format == Format::Unknown && DetectFormat(job.input.path) == Format::ZAR))
+		return RunZarExtractJob(job);
 	if (job.target.load() == Format::ZAR) {
 		std::lock_guard<std::mutex> g(job.resultMutex);
 		job.result.state = JobState::Failed;

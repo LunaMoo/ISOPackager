@@ -470,6 +470,8 @@ void App::Frame() {
 		}
 		zarReady_.clear();
 		for (const InputFile &f : benchScanned_) {
+			if (f.format == Format::ZAR)
+				continue;
 			bool dup = false;
 			for (auto &b : benchInputs_)
 				dup |= b.path == f.path;
@@ -531,7 +533,7 @@ void App::Frame() {
 void App::DrawToolbar() {
 	if (WideButton("Add files..."))
 		PickFiles([this](const std::vector<std::string> &f) { AddPaths(f); });
-	Tip("Add ISO, CSO, ZSO, DAX, CHD or PBP images. You can also drop files and folders on the window.");
+	Tip("Add ISO, CSO, ZSO, DAX, CHD, PBP, RVZ or WIA images, or ZArchives (.zar) to extract. You can also drop files and folders on the window.");
 	ImGui::SameLine();
 	if (WideButton("Add folder..."))
 		PickFolder([this](const std::string &d) { AddPaths({ d }); });
@@ -552,7 +554,7 @@ void App::DrawToolbar() {
 	ImGui::SameLine();
 	if (ImGui::Button("Apply to queued")) {
 		for (auto &j : queue_.Jobs())
-			if (j->State() == JobState::Queued && !j->zar)
+			if (j->State() == JobState::Queued && !j->zar && j->input.format != Format::ZAR)
 				j->target = addTarget_;
 	}
 	Tip("Set every image that hasn't started yet to this format.");
@@ -650,7 +652,7 @@ void App::DrawQueue() {
 		ImVec2 ts = ImGui::CalcTextSize(msg);
 		ImGui::SetCursorPos(ImVec2((avail.x - ts.x) * 0.5f, avail.y * 0.4f));
 		ImGui::TextDisabled("%s", msg);
-		const char *sub = "ISO, CSO, ZSO, CSO v2, DAX, CHD, EBOOT.PBP, RVZ and WIA in, any of them out. Create ZArchive packs a whole folder.";
+		const char *sub = "ISO, CSO, ZSO, CSO v2, DAX, CHD, EBOOT.PBP, RVZ and WIA in, any of them out. Create ZArchive packs a folder; a .zar extracts to one.";
 		ts = ImGui::CalcTextSize(sub);
 		ImGui::SetCursorPosX((avail.x - ts.x) * 0.5f);
 		ImGui::TextDisabled("%s", sub);
@@ -691,6 +693,7 @@ void App::DrawQueue() {
 		JobResult r = j->Result();
 		ImageMeta meta;
 		const ZarSpec *zar = j->zar.get();
+		const bool unpack = j->input.format == Format::ZAR;  // a .zar to extract
 		if (!zar) {
 			std::lock_guard<std::mutex> g(metaMutex_);
 			auto it = meta_.find(j->input.path);
@@ -757,12 +760,12 @@ void App::DrawQueue() {
 				selection_.clear();
 				selection_.insert(j.get());
 			}
-			if (ImGui::BeginMenu("Convert to", !zar && (st == JobState::Queued || st == JobState::Failed || st == JobState::Cancelled || st == JobState::Done ||
+			if (ImGui::BeginMenu("Convert to", !zar && !unpack && (st == JobState::Queued || st == JobState::Failed || st == JobState::Cancelled || st == JobState::Done ||
 					st == JobState::Skipped))) {
 				for (Format f : OutputFormats()) {
 					if (ImGui::MenuItem(FormatName(f), nullptr, j->target.load() == f)) {
 						for (auto &o : jobs)
-							if (selection_.count(o.get()) && o->State() != JobState::Running && !o->zar) {
+							if (selection_.count(o.get()) && o->State() != JobState::Running && !o->zar && o->input.format != Format::ZAR) {
 								o->target = f;
 								if (o->State() != JobState::Queued)
 									queue_.Retry(o);
@@ -803,7 +806,11 @@ void App::DrawQueue() {
 		// Target: editable while queued.
 		ImGui::TableNextColumn();
 		ImGui::AlignTextToFramePadding();
-		if (st == JobState::Queued && !zar) {
+		if (unpack) {
+			ImGui::TextDisabled("folder");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Extracted next to the archive, into a folder named after it");
+		} else if (st == JobState::Queued && !zar) {
 			Format t = j->target.load();
 			ImGui::SetNextItemWidth(-FLT_MIN);
 			ImGui::PushStyleColor(ImGuiCol_Text, FormatColor(t));

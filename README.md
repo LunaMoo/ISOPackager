@@ -7,6 +7,7 @@ Dear ImGui interface and a command line tool that share the same engine.
 |--------------------------------------|------------------------------------------|
 | ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP, WIA, RVZ | any of them (RVZ/WIA: GameCube and Wii discs; PBP: PSP games) |
 | a folder, or any files and folders   | one ZArchive (`.zar`): several discs, DLC folders and the rest together |
+| a ZArchive (`.zar`, `.wua`)          | a folder next to it, named after it      |
 
 Built on these libraries, linked statically from the submodules in `external/`:
 
@@ -48,6 +49,10 @@ Built on these libraries, linked statically from the submodules in `external/`:
   are compressed **in RAM** through the libraries' writer callbacks and the result goes straight
   into the archive, stored uncompressed (through a temporary file only when the RAM budget is too
   small). Verify reads every file back from the finished archive and compares it with what went in.
+- **Extract ZArchives**: a `.zar` dropped on the window, added with Add files or found by Add
+  folder is queued as ZAR → *folder*, and unpacked next to itself into a folder named after it
+  (`Game.zar` → `Game/`), then verified. An existing folder is skipped, renamed (`Game (2)`) or,
+  with Overwrite, extracted into (files of the same name replaced, others kept).
 - **Benchmark**: the successor of `img_bench` — for every image and every setting it compresses
   (timed), records the size, decodes again (timed, compared byte for byte) and times random reads
   the way an emulator seeks (CSO/ZSO/CHD). What it runs is a list you build with "Add to
@@ -69,6 +74,7 @@ isopackager-cli bench --no-cso --codecs default,zstd --hunks 8192,32768 D:\ISO
 isopackager-cli bench --cso-sets A,B,C,D,L --pbp-modes max game.iso
 isopackager-cli zar --compress-discs cso -o D:\ZAR "D:\Games\Trails in the Sky"
 isopackager-cli zar --name "Trails" --store-discs game1.chd game2.chd D:\DLC\ULUS10000
+isopackager-cli extract "Trails in the Sky.zar"                          # -> "Trails in the Sky/"
 ```
 
 `isopackager-cli --help` lists everything. The `bench` options match `img_bench`

@@ -545,6 +545,53 @@ int main(int argc, char **argv) {
 		check(r, "default (zstd 22, pre-check)", "Test Game.iso", &iso);
 		CHECK(r.outputPath == PathU8(U8Path(zdir) / "Trails in the Sky.zar"), "output %s", r.outputPath.c_str());
 
+		// Extracting it: recognised, scanned from a folder, unpacked next to it into "Trails in the Sky/".
+		{
+			const std::string zarPath = r.outputPath;
+			CHECK(DetectFormat(zarPath) == Format::ZAR, "a .zar detected as %s", FormatName(DetectFormat(zarPath)));
+			ImageInfo zi = InspectImage(zarPath);
+			CHECK(zi.isoSize == r.inputSize, "ZAR contents %llu, expected %llu", (unsigned long long)zi.isoSize, (unsigned long long)r.inputSize);
+			std::vector<std::string> w;
+			auto found = ScanInputs({ zdir }, true, &w);
+			CHECK(found.size() == 1 && found[0].format == Format::ZAR, "scanning found %zu", found.size());
+			auto extract = [&](Conflict c) {
+				Job job;
+				job.input.path = zarPath;
+				job.input.format = Format::ZAR;
+				job.input.size = fs::file_size(U8Path(zarPath));
+				job.target = Format::ISO;
+				Settings sx = base;
+				sx.out.dir = PathU8(root / "ignored");  // always next to the archive
+				sx.out.conflict = c;
+				job.settings = sx;
+				RunJob(job);
+				return job.Result();
+			};
+			JobResult x = extract(Conflict::Skip);
+			const fs::path outFolder = U8Path(zdir) / "Trails in the Sky";
+			CHECK(x.state == JobState::Done && x.verify == "OK", "extract: %s %s", JobStateName(x.state), x.message.c_str());
+			CHECK(x.outputPath == PathU8(outFolder), "extracted to %s", x.outputPath.c_str());
+			std::string why;
+			CHECK(SameBytes(PathU8(outFolder / "Test Game.iso"), iso, &why), "extracted ISO: %s", why.c_str());
+			CHECK(SameBytes(PathU8(outFolder / "DLC" / "ULUS99999-DLC1" / "data.bin"), dlc, &why), "extracted DLC: %s", why.c_str());
+			CHECK(SameBytes(PathU8(outFolder / "Disc 2.cso"), csoBytes, &why), "extracted CSO: %s", why.c_str());
+			CHECK(fs::is_directory(outFolder / "DLC" / "empty"), "empty folder not extracted");
+			CHECK(!fs::exists(U8Path(PathU8(outFolder) + ".isopk-part")), "work folder left behind");
+			JobResult again = extract(Conflict::Skip);
+			CHECK(again.state == JobState::Skipped, "existing folder not skipped: %s", JobStateName(again.state));
+			JobResult renamed = extract(Conflict::Rename);
+			CHECK(renamed.state == JobState::Done && renamed.outputPath == PathU8(outFolder) + " (2)", "rename: %s", renamed.outputPath.c_str());
+			// Overwrite goes into the existing folder: its files replaced, others kept.
+			WriteAll(PathU8(outFolder / "mine.txt"), { 'h', 'i' });
+			WriteAll(PathU8(outFolder / "Test Game.iso"), { 'x' });
+			JobResult over = extract(Conflict::Overwrite);
+			CHECK(over.state == JobState::Done && over.outputPath == PathU8(outFolder), "overwrite: %s", over.message.c_str());
+			CHECK(SameBytes(PathU8(outFolder / "Test Game.iso"), iso, &why) && fs::exists(outFolder / "mine.txt"), "overwrite: %s", why.c_str());
+			printf("  %-28s %s -> folder, %s\n", "extract", HumanBytes(x.inputSize).c_str(), x.message.c_str());
+			fs::remove_all(outFolder, ec);
+			fs::remove_all(U8Path(PathU8(outFolder) + " (2)"), ec);
+		}
+
 		Settings st = zs;
 		st.zar.storeDiscs = true;
 		st.zar.level = 3;

@@ -958,7 +958,7 @@ void App::DrawAbout() {
 	}
 	FormatBadge(Format::ZAR);
 	ImGui::SameLine(ImGui::GetFontSize() * 4);
-	ImGui::Text("%s - with Create ZArchive", FormatDescription(Format::ZAR));
+	ImGui::Text("%s - made with Create ZArchive, extracted to a folder when added", FormatDescription(Format::ZAR));
 	ImGui::Spacing();
 	ImGui::SeparatorText("Links");
 	const char *links[][2] = { { "ISOPackager", "https://github.com/LunaMoo/ISOPackager" }, { "maxcso (mCSO)", "https://github.com/LunaMoo/maxcso" },

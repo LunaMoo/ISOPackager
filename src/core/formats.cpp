@@ -10,6 +10,7 @@
 #include "core/fileio.h"
 #include "core/image.h"
 #include "core/util.h"
+#include "core/zar.h"
 
 namespace isopk {
 
@@ -140,11 +141,28 @@ const std::vector<Format> &OutputFormats() {
 }
 
 bool IsImageExtension(const std::string &ext) {
-	return ext == ".iso" || ext == ".cso" || ext == ".zso" || ext == ".dax" || ext == ".chd" || ext == ".pbp" || ext == ".wia" ||
+	// .zar / .wua (Wii U archives are ZArchives too) are queued to be extracted.
+	return ext == ".zar" || ext == ".wua" || ext == ".iso" || ext == ".cso" || ext == ".zso" || ext == ".dax" || ext == ".chd" || ext == ".pbp" || ext == ".wia" ||
 		ext == ".rvz" || ext == ".gcm";
 }
 
+// A ZArchive ends with its footer: version, then magic, both big endian. Checked before the
+// headers, since an archive storing an ISO uncompressed at its start looks like one.
+static bool IsZArchive(const std::string &path) {
+	File f;
+	if (!f.Open(path, File::Read))
+		return false;
+	const uint64_t size = f.Size();
+	uint8_t t[8];
+	if (size < 200 || !f.ReadExact(size - 8, t, 8))
+		return false;
+	static const uint8_t tail[8] = { 0x61, 0xBF, 0x3A, 0x01, 0x16, 0x9F, 0x52, 0xD6 };
+	return memcmp(t, tail, 8) == 0;
+}
+
 Format DetectFormat(const std::string &path) {
+	if (IsZArchive(path))
+		return Format::ZAR;
 	uint8_t h[0x8006] = {};
 	size_t n = ReadHead(path, h, sizeof(h));
 	if (n >= 24 && memcmp(h, "CISO", 4) == 0)
@@ -185,6 +203,17 @@ ImageInfo InspectImage(const std::string &path) {
 	}
 	info.format = DetectFormat(path);
 	switch (info.format) {
+	case Format::ZAR: {
+		uint64_t files = 0, bytes = 0;
+		std::string err;
+		if (ZArchiveContents(path, &files, &bytes, &err)) {
+			info.isoSize = bytes;
+			info.detail = Fmt("%llu file%s, extracts to a folder", (unsigned long long)files, files == 1 ? "" : "s");
+		} else {
+			info.error = err;
+		}
+		break;
+	}
 	case Format::ISO:
 		info.isoSize = info.fileSize;
 		info.blockSize = 2048;
