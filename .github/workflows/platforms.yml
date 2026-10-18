@@ -68,9 +68,9 @@ jobs:
           prepare: pkg install -y cmake ninja pkgconf libX11 libXext libXrandr libXcursor libXi libXScrnSaver libXfixes
           run: |
             set -e
-            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release > configure.log 2>&1 || { grep -E "Error|error" -A3 configure.log | head -20 | sed 's/^/::error::/'; exit 1; }
-            cmake --build build --parallel 4 > build.log 2>&1 || { grep -E "error|Error" build.log | head -25 | sed 's/^/::error::/'; exit 1; }
-            build/isopk_selftest /tmp/isopk_selftest > test.log 2>&1 || { grep -E "FAIL|error" test.log | head -25 | sed 's/^/::error::/'; exit 1; }
+            cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release > configure.log 2>&1 || { grep -E "Error|error" -A3 configure.log | head -20 | sed 's/^/::error::/'; tail -15 configure.log | sed 's/^/::error::/'; exit 1; }
+            cmake --build build --parallel 4 > build.log 2>&1 || { grep -E "error|Error" build.log | head -25 | sed 's/^/::error::/'; tail -15 build.log | sed 's/^/::error::/'; exit 1; }
+            build/isopk_selftest /tmp/isopk_selftest > test.log 2>&1 || { echo "::error::self-test exit code $?"; grep -E "FAIL|error" test.log | head -25 | sed 's/^/::error::/'; tail -15 test.log | sed 's/^/::error::/'; exit 1; }
             tail -3 test.log
       - uses: actions/upload-artifact@v5
         with:
