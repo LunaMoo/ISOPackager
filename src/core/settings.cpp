@@ -154,6 +154,7 @@ bool ChdSettings::SetCodecs(const std::string &list) {
 		return true;
 	}
 	std::vector<uint32_t> out;
+	std::replace(l.begin(), l.end(), ',', '+');
 	for (const std::string &name : Split(l, '+')) {
 		bool known = false;
 		for (const std::string &c : ChdCodecChoices())
@@ -167,7 +168,8 @@ bool ChdSettings::SetCodecs(const std::string &list) {
 }
 
 std::string ChdSettings::Describe() const {
-	return Fmt("%s hunk %u", CodecsString().c_str(), EffectiveHunk());
+	const uint32_t h = EffectiveHunk();
+	return Fmt("%s hunk %s", CodecsString().c_str(), (h % 1024 ? Fmt("%u", h) : Fmt("%uK", h / 1024)).c_str());
 }
 
 const std::vector<std::string> &ChdCodecChoices() {
@@ -376,6 +378,14 @@ bool Settings::Load(const std::string &path) {
 	}
 
 	u32("chd.hunk", chd.hunkBytes);
+	// Settings written before version 2 saved chdman's default (0 = 4K) as the default hunk; the
+	// default is 2K now.
+	{
+		uint32_t version = 1;
+		u32("settings.version", version);
+		if (version < 2 && chd.hunkBytes == 0)
+			chd.hunkBytes = 2048;
+	}
 	s.clear();
 	str("chd.codecs", s);
 	if (!s.empty())
@@ -464,6 +474,7 @@ bool Settings::Save(const std::string &path) const {
 	fs::create_directories(U8Path(path).parent_path(), ec);
 	std::string t;
 	t += "# ISOPackager settings\n";
+	t += "settings.version=2\n";
 	t += Fmt("target=%s\n", FormatKey(target));
 	for (Format f : { Format::CSO, Format::ZSO, Format::CSO2, Format::DAX }) {
 		const CsoSettings &c = Cso(f);

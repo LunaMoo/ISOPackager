@@ -44,12 +44,14 @@ constexpr uint32_t NO_ALL = NO_ZLIB | NO_ZOPFLI | NO_7ZIP | NO_LZ4 | NO_LIBDEFLA
 // ---- CHD (CHDmodern) --------------------------------------------------------------------------
 
 struct ChdSettings {
-	uint32_t hunkBytes = 0;          // multiple of 2048, 0 = chdman's default (4096)
+	// Multiple of 2048. 2K by default: one UMD sector per hunk, so every read decompresses only what
+	// it needs; 0 = chdman's own default (4096).
+	uint32_t hunkBytes = 2048;
 	std::vector<uint32_t> codecs;    // up to 4 FourCCs, empty = chdman's default (lzma, zlib, huff, flac)
 
 	uint32_t EffectiveHunk() const { return hunkBytes ? hunkBytes : 4096; }
 	std::string CodecsString() const;          // "default" or "lzma+zstd"
-	bool SetCodecs(const std::string &list);   // "default", "zstd", "lzma+zlib", ...
+	bool SetCodecs(const std::string &list);   // "default", "zstd", "lzma+zlib" or "lzma,zlib", ...
 	std::string Describe() const;
 };
 // Codecs that make sense for DVD/UMD data.
@@ -129,7 +131,7 @@ struct EngineSettings {
 	bool lowPriority = true;    // below-normal process priority while working
 };
 
-// The benchmark list a fresh install starts with: libdeflate 256K CSO, chdman's default CHD, LZRC PBP.
+// The benchmark list a fresh install starts with: libdeflate 256K CSO, the default CHD (2K hunks), LZRC PBP.
 std::vector<std::string> DefaultBenchCases();
 
 struct Settings {

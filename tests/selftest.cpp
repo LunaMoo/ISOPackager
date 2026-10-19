@@ -5,6 +5,7 @@
 // Usage: isopk_selftest <scratch folder>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -64,6 +65,24 @@ static JobResult Convert(const std::string &input, Format target, Settings s, co
 	RunJob(job);
 	return job.Result();
 }
+
+#ifdef ISOPK_CLI_EXE
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
+// Runs isopackager-cli with args (ASCII paths only: std::system takes the ANSI code page on
+// Windows). Returns its exit code; its output goes to log.
+static int Cli(const std::string &args, const std::string &log) {
+	std::string cmd = std::string("\"") + ISOPK_CLI_EXE + "\" " + args + " > \"" + log + "\" 2>&1";
+#ifdef _WIN32
+	cmd = "\"" + cmd + "\"";  // cmd.exe drops the outer quotes
+	return std::system(cmd.c_str());
+#else
+	int st = std::system(cmd.c_str());
+	return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+#endif
+}
+#endif
 
 static JobResult MakeZar(const ZarSpec &specIn, Settings s, const std::string &outDir) {
 	ZarSpec spec = specIn;
@@ -725,6 +744,53 @@ int main(int argc, char **argv) {
 		JobResult bad = Convert(isoPath, Format::ZAR, base, zdir);
 		CHECK(bad.state == JobState::Failed, "a plain job made a ZAR");
 	}
+
+#ifdef ISOPK_CLI_EXE
+	// The command line tool, end to end: every format without options gives the defaults.
+	{
+		printf("Command line\n");
+		const fs::path cdir = root / "cli";
+		fs::create_directories(cdir / "game" / "DLC", ec);
+		const std::string q = "\"", d = PathU8(cdir), log = PathU8(cdir / "out.txt");
+		WriteAll(PathU8(cdir / "game" / "Game.iso"), iso);
+		WriteAll(PathU8(cdir / "game" / "DLC" / "dlc.bin"), std::vector<uint8_t>(300000, 'd'));
+		auto run = [&](const std::string &args, int want) {
+			int rc = Cli(args, log);
+			std::string out;
+			{
+				std::vector<uint8_t> b = ReadAll(log);
+				out.assign(b.begin(), b.end());
+			}
+			CHECK(rc == want, "isopackager-cli %s: exit %d, expected %d\n%s", args.c_str(), rc, want, out.c_str());
+			return out;
+		};
+		const std::string isoArg = q + PathU8(cdir / "game" / "Game.iso") + q;
+		run("cso -q -o " + q + d + "/a" + q + " " + isoArg, 0);
+		run("chd -q -o " + q + d + "/a" + q + " " + isoArg, 0);
+		ImageInfo ci = InspectImage(PathU8(cdir / "a" / "Game.cso"));
+		CHECK(ci.format == Format::CSO && ci.blockSize == 65536, "cli cso: %s block %u", FormatName(ci.format), ci.blockSize);
+		ImageInfo hi = InspectImage(PathU8(cdir / "a" / "Game.chd"));
+		CHECK(hi.format == Format::CHD && hi.blockSize == 2048, "cli chd: %s hunk %u", FormatName(hi.format), hi.blockSize);
+		run("cso -q --method zopfli --block 16K --precheck 98 -o " + q + d + "/b" + q + " " + q + d + "/a/Game.chd" + q, 0);
+		CHECK(InspectImage(PathU8(cdir / "b" / "Game.cso")).blockSize == 16384, "cli cso --block 16K");
+		run("chd --level 3 " + isoArg, 1);
+		run("cso --method lz4 " + isoArg, 1);
+		run("frobnicate " + isoArg, 1);
+		run("zar -q --discs pbp -o " + q + d + "/z" + q + " " + q + d + "/game" + q, 0);
+		bool found;
+		CHECK(!ZarFile(PathU8(cdir / "z" / "game.zar"), "Game/EBOOT.PBP", &found).empty() && found, "cli zar --discs pbp");
+		std::string v = run("verify " + q + d + "/z/game.zar" + q, 0);
+		CHECK(v.find("SHA-256 matches") != std::string::npos, "cli verify zar: %s", v.c_str());
+		run("iso -q " + q + d + "/z/game.zar" + q, 0);
+		std::string why;
+		CHECK(SameBytes(PathU8(cdir / "z" / "game" / "DLC" / "dlc.bin"), std::vector<uint8_t>(300000, 'd'), &why), "cli zar extract: %s", why.c_str());
+		std::string b = run("bench --reads 10 --work " + q + d + "/bench" + q + " --case cso --case " + q + "chd --block 16K" + q + " " + isoArg, 0);
+		CHECK(b.find("zstd") == std::string::npos && b.find("default hunk 16K") != std::string::npos, "cli bench output:\n%s", b.c_str());
+		std::string f = run("formats", 0);
+		CHECK(f.find("default hunk 2K") != std::string::npos && f.find("libdeflate 64K") != std::string::npos, "cli formats:\n%s", f.c_str());
+		printf("  ok\n");
+	}
+#endif
 
 	// A tiny benchmark.
 	{

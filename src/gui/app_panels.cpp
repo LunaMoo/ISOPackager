@@ -348,8 +348,9 @@ void App::DrawSettings() {
 		ImGui::Indent();
 		ChdSettings &c = settings_.chd;
 		row("Hunk size");
-		changed |= BlockSizeCombo("##hunk", &c.hunkBytes, 2048, 1u << 20, true, "Default (4K)");
-		HelpMarker("Bigger hunks compress better; every read decompresses a whole hunk.");
+		changed |= BlockSizeCombo("##hunk", &c.hunkBytes, 2048, 1u << 20, true, "chdman's (4K)");
+		HelpMarker("2K (the default) holds one disc sector, so every read decompresses only what it needs. Bigger hunks compress "
+				   "better; every read decompresses a whole hunk.");
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted("Codecs");
 		ImGui::SameLine(labelW);
@@ -643,7 +644,7 @@ void App::DrawBenchmark() {
 		}
 		SaveBenchCases();
 	}
-	ImGui::SetItemTooltip("libdeflate 256K CSO, chdman's default CHD and LZRC PBP");
+	ImGui::SetItemTooltip("libdeflate 256K CSO, the default CHD (2K hunks) and LZRC PBP");
 	ImGui::EndDisabled();
 
 	ImGui::BeginDisabled(running);

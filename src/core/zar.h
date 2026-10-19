@@ -79,6 +79,8 @@ bool ZArchiveContents(const std::string &zarPath, uint64_t *files, uint64_t *byt
 // on this system are adjusted. written gets what was written where (archivePath = the path
 // relative to outDir), for verifying. ctx.progress gets 0..1.
 bool ExtractZArchive(const std::string &zarPath, const std::string &outDir, OpContext &ctx, std::vector<ZarWritten> *written);
+// Checks the archive's own SHA-256 (in its footer) over every byte. verdict: "OK" or what's wrong.
+bool TestZArchive(const std::string &zarPath, OpContext &ctx, std::string *verdict);
 // Reads the extracted files back and compares them (by hash) with what the archive held.
 bool VerifyExtractedZArchive(const std::string &outDir, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict);
 

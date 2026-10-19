@@ -19,7 +19,7 @@ struct BenchCase {
 	ChdSettings chd;
 	PbpSettings pbp;
 	RvzSettings rvz;
-	std::string label;  // "B zopfli5 splits20 256K", "default hunk 4096", ...
+	std::string label;  // "B zopfli5 splits20 256K", "default hunk 2K", ...
 };
 
 // img_bench's CSO sets (all at 256K): A zopfli5, B zopfli5 splits 20, C pre-check 98% + zopfli5,
@@ -65,7 +65,7 @@ struct BenchRow {
 
 struct BenchCallbacks {
 	std::function<void(const BenchRow &)> row;
-	// What's running: "Game: CHD default hunk 4096 - compressing", fraction of that step, of everything.
+	// What's running: "Game: CHD default hunk 2K - compressing", fraction of that step, of everything.
 	std::function<void(const std::string &, double, double)> progress;
 };
 

@@ -71,7 +71,8 @@ std::string ZarSpec::SourceDir() const {
 	const std::string &first = !rootDir.empty() ? rootDir : (extras.empty() ? std::string() : extras.front());
 	if (first.empty())
 		return {};
-	fs::path p = U8Path(first);
+	std::error_code ec;
+	fs::path p = fs::absolute(U8Path(first), ec).lexically_normal();
 	// "D:/Games/Trails/" -> "D:/Games"
 	if (!p.has_filename())
 		p = p.parent_path();
@@ -757,6 +758,32 @@ bool ExtractZArchive(const std::string &zarPath, const std::string &outDir, OpCo
 	if (ctx.progress)
 		ctx.progress(1.0);
 	return true;
+}
+
+bool TestZArchive(const std::string &zarPath, OpContext &ctx, std::string *verdict) {
+	std::unique_ptr<ZArchiveReader> r(ZArchiveReader::OpenFromFile(U8Path(zarPath)));
+	if (!r) {
+		*verdict = "not a valid ZArchive";
+		return false;
+	}
+	bool stopped = false;
+	const bool ok = r->VerifyIntegrity([&](uint64_t done, uint64_t total) {
+		if (ctx.Cancelled()) {
+			stopped = true;
+			return false;
+		}
+		if (ctx.progress && total)
+			ctx.progress((double)done / (double)total);
+		return true;
+	});
+	if (stopped) {
+		ctx.cancelled = true;
+		ctx.error = "cancelled";
+		*verdict = "cancelled";
+		return false;
+	}
+	*verdict = ok ? "OK, SHA-256 matches" : "SHA-256 mismatch: the archive is damaged";
+	return ok;
 }
 
 bool VerifyExtractedZArchive(const std::string &outDir, const std::vector<ZarWritten> &written, OpContext &ctx, std::string *verdict) {

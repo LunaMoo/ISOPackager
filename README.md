@@ -59,37 +59,39 @@ Built on these libraries, linked statically from the submodules in `external/`:
   (timed), records the size, decodes again (timed, compared byte for byte) and times random reads
   the way an emulator seeks (CSO/ZSO/CHD). What it runs is a list you build with "Add to
   benchmark" under each format in Settings, so any combination of options can be compared
-  (it starts with libdeflate 256K CSO, chdman's default CHD and LZRC PBP; each entry has an ×).
+  (it starts with libdeflate 256K CSO, the default CHD with 2K hunks and LZRC PBP; each entry has an ×).
   Results go to a table, a size-vs-speed chart, and are appended to `summary.txt` and `results.csv`.
 
 ## Command line
 
+The command is the format to make, and every format works without options (with the settings in
+the table below). `--method`, `--level` and `--block` tune any format the same way.
+
 ```
-isopackager-cli convert --to chd --codecs lzma+zstd -o D:\CHD D:\ISO
-isopackager-cli convert --to cso --preset max --block 16K game.chd      # repacked through RAM
-isopackager-cli convert --to zso -j 2 --delete-source D:\Games
-isopackager-cli convert --to rvz --rvz-method zstd --rvz-level 19 --rvz-chunk 256K D:\Wii
-isopackager-cli extract EBOOT.PBP
+isopackager-cli cso game.iso                                  # libdeflate, 64K blocks
+isopackager-cli chd -o D:\CHD D:\ISO                          # chdman's codecs, 2K hunks
+isopackager-cli cso game.chd                                  # repacked through RAM
+isopackager-cli chd --method lzma,zstd --block 16K game.iso
+isopackager-cli rvz --method zstd --level 19 D:\Wii
+isopackager-cli iso EBOOT.PBP "Trails in the Sky.zar"         # ISO; the archive to a folder
+isopackager-cli zar --discs chd "D:\Games\Trails in the Sky"  # one archive, discs as CHD
 isopackager-cli verify --against original.iso game.cso
-isopackager-cli info D:\Games
-isopackager-cli bench --no-cso --codecs default,zstd --hunks 8192,32768 D:\ISO
-isopackager-cli bench --cso-sets A,B,C,D,L --pbp-modes max game.iso
-isopackager-cli zar --compress-discs cso -o D:\ZAR "D:\Games\Trails in the Sky"
-isopackager-cli zar --name "Trails" --store-discs game1.chd game2.chd D:\DLC\ULUS10000
-isopackager-cli extract "Trails in the Sky.zar"                          # -> "Trails in the Sky/"
+isopackager-cli bench --case cso --case "chd --block 16K" game.iso
 ```
 
-`isopackager-cli --help` lists everything. The `bench` options match `img_bench`
-(`--cso-sets`, `--codecs`, `--hunks`, `--pbp-modes`, `--reads`, `--no-cso/--no-chd/--no-pbp`,
-`--no-verify`), plus `--extra zso,cso2,dax`, `--source-on-disk` and `--work DIR`.
+| Without options | |
+|---|---|
+| CSO / CSO v2 | libdeflate, 64K blocks |
+| ZSO | lz4 + lz4 HC, 64K blocks |
+| DAX | libdeflate |
+| CHD | chdman's codecs (lzma, zlib, huff, flac), 2K hunks |
+| PBP | LZRC, `Game/EBOOT.PBP` |
+| RVZ / WIA | LZMA2 level 5, 128K / 2M chunks |
+| ZAR | zstd 22, 95% pre-check |
 
-`zar` packs one folder's contents, or several files and folders each under its own name, into
-`<name>.zar` (`--name`, default the folder's name) with `--zar-level`, `--zar-precheck`,
-`--store-discs` and `--compress-discs FMT`. The GUI takes `--zar FOLDER` to open Create ZArchive.
-
-CSO benchmark sets (from img_bench): A zopfli5, B zopfli5 splits 20, C pre-check 98% + zopfli5,
-D pre-check 98% + zopfli5 splits 20, L libdeflate12 only (all at 256K blocks), and F / S / X for
-the fast / standard / max presets.
+**[docs/cli.md](docs/cli.md)** describes every command and option, with examples;
+`isopackager-cli --help` is the short list. `--gui-settings` runs with the GUI's saved settings,
+and the GUI takes `--zar FOLDER` to open Create ZArchive.
 
 ## Platforms
 

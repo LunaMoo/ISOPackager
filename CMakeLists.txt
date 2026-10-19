@@ -236,6 +236,11 @@ if(ISOPK_BUILD_TESTS)
 		target_sources(isopk_selftest PRIVATE src/platform/windows/utf8.manifest)
 	endif()
 	add_test(NAME selftest COMMAND isopk_selftest ${CMAKE_CURRENT_BINARY_DIR}/selftest_tmp)
+	if(ISOPK_BUILD_CLI)
+		# The self-test also runs the command line tool end to end.
+		add_dependencies(isopk_selftest isopackager_cli)
+		target_compile_definitions(isopk_selftest PRIVATE ISOPK_CLI_EXE="$<TARGET_FILE:isopackager_cli>")
+	endif()
 endif()
 
 # ---------------------------------------------------------------------------

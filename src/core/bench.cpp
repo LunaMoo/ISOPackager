@@ -75,7 +75,7 @@ BenchCase MakeChdCase(const std::string &codecs, uint32_t hunk) {
 	c.format = Format::CHD;
 	c.chd.SetCodecs(codecs);
 	c.chd.hunkBytes = hunk;
-	c.label = Fmt("%s hunk %u", c.chd.CodecsString().c_str(), c.chd.EffectiveHunk());
+	c.label = c.chd.Describe();
 	return c;
 }
 
@@ -201,7 +201,7 @@ std::vector<std::string> DefaultBenchCases() {
 	MakeCsoCase("L", &l);  // libdeflate 256K
 	v.push_back(SerializeBenchCase(l));
 #endif
-	v.push_back(SerializeBenchCase(MakeChdCase("default", 0)));
+	v.push_back(SerializeBenchCase(MakeChdCase(ChdSettings())));  // the default: chdman's codecs, 2K hunks
 	v.push_back(SerializeBenchCase(MakePbpCase(1)));
 	return v;
 }
