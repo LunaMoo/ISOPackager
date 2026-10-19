@@ -64,34 +64,7 @@ Built on these libraries, linked statically from the submodules in `external/`:
 
 ## Command line
 
-The command is the format to make, and every format works without options (with the settings in
-the table below). `--method`, `--level` and `--block` tune any format the same way.
-
-```
-isopackager-cli cso game.iso                                  # libdeflate, 64K blocks
-isopackager-cli chd -o D:\CHD D:\ISO                          # chdman's codecs, 2K hunks
-isopackager-cli cso game.chd                                  # repacked through RAM
-isopackager-cli chd --method lzma,zstd --block 16K game.iso
-isopackager-cli rvz --method zstd --level 19 D:\Wii
-isopackager-cli iso EBOOT.PBP "Trails in the Sky.zar"         # ISO; the archive to a folder
-isopackager-cli zar --discs chd "D:\Games\Trails in the Sky"  # one archive, discs as CHD
-isopackager-cli verify --against original.iso game.cso
-isopackager-cli bench --case cso --case "chd --block 16K" game.iso
-```
-
-| Without options | |
-|---|---|
-| CSO / CSO v2 | libdeflate, 64K blocks |
-| ZSO | lz4 + lz4 HC, 64K blocks |
-| DAX | libdeflate |
-| CHD | chdman's codecs (lzma, zlib, huff, flac), 2K hunks |
-| PBP | LZRC, `Game/EBOOT.PBP` |
-| RVZ / WIA | LZMA2 level 5, 128K / 2M chunks |
-| ZAR | zstd 22, 95% pre-check |
-
-**[docs/cli.md](docs/cli.md)** describes every command and option, with examples;
-`isopackager-cli --help` is the short list. `--gui-settings` runs with the GUI's saved settings,
-and the GUI takes `--zar FOLDER` to open Create ZArchive.
+See **[docs/cli.md](docs/cli.md)** for the `isopackager-cli` guide.
 
 ## Platforms
 
