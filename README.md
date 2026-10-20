@@ -61,6 +61,14 @@ Built on these libraries, linked statically from the submodules in `external/`:
   benchmark" under each format in Settings, so any combination of options can be compared
   (it starts with libdeflate 256K CSO, the default CHD with 2K hunks and LZRC PBP; each entry has an ×).
   Results go to a table, a size-vs-speed chart, and are appended to `summary.txt` and `results.csv`.
+- **Two layouts** *(experimental)*: the desktop one (toolbar, tabs, a queue table) and a mobile
+  one — one column and one page at a time (Queue, Settings, Benchmark, Log/About), bigger text,
+  finger-sized buttons, settings labelled above full-width controls with their help written out,
+  queue entries as cards (tap one for its actions), drag-to-scroll, and Start / Cancel all always
+  in reach above a bottom navigation bar. The button in the middle at the bottom of either layout
+  switches to the other; phones and tablets start in the mobile one (Settings > Appearance >
+  Layout: Automatic, Desktop or Mobile). On a wide window the mobile column stays phone-shaped,
+  centred. To try it at a phone's size: `isopackager --layout mobile --window 412x900`.
 
 ## Command line
 

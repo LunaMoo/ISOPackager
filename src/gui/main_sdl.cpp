@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -86,7 +87,17 @@ int main(int argc, char **argv) {
 	Uint32 flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
 	if (ISOPK_TOUCH)
 		flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-	SDL_Window *window = SDL_CreateWindow("ISOPackager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1180 * scale), (int)(760 * scale), flags);
+	// --window WxH starts at that size, e.g. --window 412x900 --layout mobile to try the mobile layout
+	// at a phone's size.
+	int winW = (int)(1180 * scale), winH = (int)(760 * scale);
+	for (int i = 1; i + 1 < argc; ++i) {
+		int w, h;
+		if (strcmp(argv[i], "--window") == 0 && sscanf(argv[i + 1], "%dx%d", &w, &h) == 2 && w > 100 && h > 100) {
+			winW = w;
+			winH = h;
+		}
+	}
+	SDL_Window *window = SDL_CreateWindow("ISOPackager", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, winW, winH, flags);
 	if (!window) {
 		fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError());
 		return 1;
@@ -140,6 +151,13 @@ int main(int argc, char **argv) {
 	gui::PlatformHooks hooks;
 	hooks.dpiScale = scale;
 	hooks.touch = ISOPK_TOUCH;
+#if defined(__ANDROID__)
+	{
+		float ddpi = 0;
+		if (SDL_GetDisplayDPI(0, &ddpi, nullptr, nullptr) == 0 && ddpi > 0)
+			hooks.density = ddpi / 160.0f;
+	}
+#endif
 	hooks.platformName = PlatformName();
 	hooks.openUrl = [](const std::string &url) { SDL_OpenURL(url.c_str()); };
 #if !ISOPK_TOUCH && !defined(_WIN32)

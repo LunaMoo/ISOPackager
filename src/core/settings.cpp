@@ -463,6 +463,9 @@ bool Settings::Load(const std::string &path) {
 		double sc = uiScale;
 		dbl("ui.scale", sc);
 		uiScale = sc < 0.5 || sc > 4 ? 1.0f : (float)sc;
+		uint32_t l = (uint32_t)uiLayout;
+		u32("ui.layout", l);
+		uiLayout = l > 2 ? 0 : (int)l;
 	}
 	if (engine.jobs == 0)
 		engine.jobs = 1;
@@ -501,7 +504,7 @@ bool Settings::Save(const std::string &path) const {
 		(unsigned long long)engine.ramBudget, engine.tempDir.c_str());
 	t += Fmt("engine.jobs=%u\nengine.threads=%u\nengine.low_priority=%d\nrecursive=%d\n", engine.jobs, engine.threads, engine.lowPriority,
 		recursive);
-	t += Fmt("ui.theme=%d\nui.scale=%.2f\n", uiTheme, uiScale);
+	t += Fmt("ui.theme=%d\nui.scale=%.2f\nui.layout=%d\n", uiTheme, uiScale, uiLayout);
 	{
 		std::string cases;
 		for (const std::string &c : benchCases)

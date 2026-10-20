@@ -20,15 +20,10 @@ static const ImVec4 kOk(0.40f, 0.85f, 0.50f, 1), kWarn(0.98f, 0.75f, 0.30f, 1), 
 
 // One mCSO container (CSO, ZSO, CSO v2, DAX): only the options it takes.
 bool App::DrawCsoSection(Format f, const char *header, bool open) {
-	if (!ImGui::CollapsingHeader(header, open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+	if (!ImGui::CollapsingHeader(header, open && !MobileLayout() ? ImGuiTreeNodeFlags_DefaultOpen : 0))
 		return false;
 	const float em = ImGui::GetFontSize(), labelW = em * 12;
-	auto row = [&](const char *label) {
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(label);
-		ImGui::SameLine(labelW);
-		ImGui::SetNextItemWidth(em * 14);
-	};
+	auto row = [&](const char *label) { SettingLabel(label, labelW / em, 14); };
 	const bool zso = f == Format::ZSO, v2 = f == Format::CSO2, dax = f == Format::DAX;
 	const bool deflate = !zso, lz4 = zso || v2;
 	bool changed = false;
@@ -36,7 +31,7 @@ bool App::DrawCsoSection(Format f, const char *header, bool open) {
 	ImGui::PushID(FormatKey(f));
 	ImGui::Indent();
 	const char *defLabel = zso ? "Default (lz4 HC, 64K blocks)" : dax ? "Default (libdeflate)" : "Default (libdeflate, 64K blocks)";
-	changed |= ImGui::Checkbox(defLabel, &c.useDefault);
+	changed |= CheckboxWrap(defLabel, &c.useDefault);
 	if (f == Format::CSO)
 		Tip("Fast to compress and quick to read in PPSSPP. Some old PSP custom firmware can't read libdeflate's output; untick to choose methods "
 			"yourself.");
@@ -60,23 +55,23 @@ bool App::DrawCsoSection(Format f, const char *header, bool open) {
 		if (c.preset == CsoPreset::Custom) {
 			if (deflate) {
 				ImGui::TextDisabled("Deflate methods: every enabled one is tried on each block, the smallest wins");
-				changed |= ImGui::Checkbox("zlib", &c.zlib);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("zlib brute force", &c.zlibBrute);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("7-zip deflate", &c.sevenZip);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("Zopfli", &c.zopfli);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("libdeflate", &c.libdeflate);
+				changed |= CheckboxWrap("zlib", &c.zlib);
+				SameLineDesktop();
+				changed |= CheckboxWrap("zlib brute force", &c.zlibBrute);
+				SameLineDesktop();
+				changed |= CheckboxWrap("7-zip deflate", &c.sevenZip);
+				SameLineDesktop();
+				changed |= CheckboxWrap("Zopfli", &c.zopfli);
+				SameLineDesktop();
+				changed |= CheckboxWrap("libdeflate", &c.libdeflate);
 			}
 			if (lz4) {
 				ImGui::TextDisabled(v2 ? "lz4 methods (used where they beat deflate)" : "lz4 methods: the smallest result wins");
-				changed |= ImGui::Checkbox("lz4", &c.lz4);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("lz4 HC", &c.lz4hc);
-				ImGui::SameLine();
-				changed |= ImGui::Checkbox("lz4 HC brute force", &c.lz4Brute);
+				changed |= CheckboxWrap("lz4", &c.lz4);
+				SameLineDesktop();
+				changed |= CheckboxWrap("lz4 HC", &c.lz4hc);
+				SameLineDesktop();
+				changed |= CheckboxWrap("lz4 HC brute force", &c.lz4Brute);
 			}
 		}
 		if (deflate) {
@@ -96,7 +91,7 @@ bool App::DrawCsoSection(Format f, const char *header, bool open) {
 			HelpMarker("Skip Zopfli and 7-zip on blocks libdeflate can't get below this share of the block (video, audio): much faster Maximum "
 					   "compression for nearly the same size (img_bench sets C and D use 98%).");
 		}
-		changed |= ImGui::Checkbox("Compress every block, even when it doesn't save space", &c.forceAll);
+		changed |= CheckboxWrap("Compress every block, even when it doesn't save space", &c.forceAll);
 	}
 	ImGui::TextDisabled("%s", c.Describe(f).c_str());
 	DrawAddToBenchmark(MakeMcsoCase(f, c), FormatKey(f));
@@ -107,21 +102,16 @@ bool App::DrawCsoSection(Format f, const char *header, bool open) {
 
 // One iRVZ container (RVZ, WIA): only the methods and chunk sizes it takes.
 bool App::DrawRvzSection(Format f, const char *header, bool open) {
-	if (!ImGui::CollapsingHeader(header, open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+	if (!ImGui::CollapsingHeader(header, open && !MobileLayout() ? ImGuiTreeNodeFlags_DefaultOpen : 0))
 		return false;
 	const float em = ImGui::GetFontSize(), labelW = em * 12;
-	auto row = [&](const char *label) {
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(label);
-		ImGui::SameLine(labelW);
-		ImGui::SetNextItemWidth(em * 14);
-	};
+	auto row = [&](const char *label) { SettingLabel(label, labelW / em, 14); };
 	const bool wia = f == Format::WIA;
 	bool changed = false;
 	RvzSettings &c = settings_.Rvz(f);
 	ImGui::PushID(FormatKey(f));
 	ImGui::Indent();
-	changed |= ImGui::Checkbox(wia ? "Default (LZMA2 level 5, 2M chunks)" : "Default (LZMA2 level 5, 128K chunks)", &c.useDefault);
+	changed |= CheckboxWrap(wia ? "Default (LZMA2 level 5, 2M chunks)" : "Default (LZMA2 level 5, 128K chunks)", &c.useDefault);
 	Tip(wia ? "Untick to choose the method, level and chunk size yourself." : "Small files that Dolphin reads quickly. Untick to choose the method, "
 		"level and chunk size yourself.");
 	if (!c.useDefault) {
@@ -191,19 +181,14 @@ bool App::DrawRvzSection(Format f, const char *header, bool open) {
 }
 
 void App::DrawZarSection(bool open, bool *changed) {
-	if (!ImGui::CollapsingHeader("ZArchive (.zar)", open ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+	if (!ImGui::CollapsingHeader("ZArchive (.zar)", open && !MobileLayout() ? ImGuiTreeNodeFlags_DefaultOpen : 0))
 		return;
 	ImGui::PushID("zar");
 	ImGui::Indent();
 	ZarSettings &z = settings_.zar;
 	const float em = ImGui::GetFontSize();
 	const float labelW = em * 12;
-	auto row = [&](const char *label) {
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(label);
-		ImGui::SameLine(labelW);
-		ImGui::SetNextItemWidth(em * 14);
-	};
+	auto row = [&](const char *label) { SettingLabel(label, labelW / em, 14); };
 	ImGui::TextDisabled("Used by Create ZArchive: several discs, folders and DLC in one archive, read with random access.");
 	row("zstd level");
 	*changed |= ImGui::SliderInt("##level", &z.level, 1, 22, z.level >= 20 ? "%d (ultra)" : "%d");
@@ -217,21 +202,21 @@ void App::DrawZarSection(bool open, bool *changed) {
 	HelpMarker("Each block is first tried at zstd's fastest level. Blocks that don't get below this share of their size are stored as "
 			   "they are, without spending time on the level above: already compressed games (CSO, CHD, RVZ...) or videos inside the "
 			   "archive then cost almost nothing, and read back without decompressing. 95% keeps everything that compresses.");
-	*changed |= ImGui::Checkbox("Don't compress game discs", &z.storeDiscs);
+	*changed |= CheckboxWrap("Don't compress game discs", &z.storeDiscs);
 	Tip("Store disc images (ISO, CSO, CHD, PBP, RVZ...) without compressing them; the rest (DLC, saves) is still compressed. "
 		"Use it when the games are already in a compressed format: it's faster, and they read back without a second decompression.");
 	if (z.storeDiscs) {
-		ImGui::SameLine();
+		SameLineDesktop();
 		ImGui::TextDisabled("(the pre-check already catches most compressed discs)");
 	}
-	*changed |= ImGui::Checkbox("Compress (or convert) the game discs before adding them", &z.compressDiscs);
+	*changed |= CheckboxWrap("Compress (or convert) the game discs before adding them", &z.compressDiscs);
 	Tip("Every disc goes into the archive in the chosen format: plain ISOs are compressed, discs in another format (PBP, CHD, CSO...) are "
 		"extracted to an ISO in RAM and compressed from there, also into RAM, and the result is stored in the archive without a second "
 		"compression. Discs already in that format go in as they are. A temporary file stands in for a step that doesn't fit the RAM "
 		"budget. The chosen format's own settings above apply.");
 	if (z.compressDiscs) {
-		ImGui::SameLine();
-		ImGui::SetNextItemWidth(em * 6.5f);
+		SameLineDesktop();
+		ItemWidthEm(6.5f);
 		if (FormatCombo("##discfmt", &z.discFormat, false))
 			*changed = true;
 		Tip(FormatDescription(z.discFormat));
@@ -251,12 +236,7 @@ void App::DrawSettings() {
 	bool changed = false;
 	const float em = ImGui::GetFontSize();
 	const float labelW = em * 12;
-	auto row = [&](const char *label) {
-		ImGui::AlignTextToFramePadding();
-		ImGui::TextUnformatted(label);
-		ImGui::SameLine(labelW);
-		ImGui::SetNextItemWidth(em * 14);
-	};
+	auto row = [&](const char *label) { SettingLabel(label, labelW / em, 14); };
 
 	// --- Output
 	if (ImGui::CollapsingHeader("Output", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -267,32 +247,32 @@ void App::DrawSettings() {
 			settings_.out.conflict = (Conflict)c;
 			changed = true;
 		}
-		changed |= ImGui::Checkbox("Recreate the scanned folders under the output folder", &settings_.out.mirrorTree);
+		changed |= CheckboxWrap("Recreate the scanned folders under the output folder", &settings_.out.mirrorTree);
 		Tip("Adding D:\\Games with a subfolder RPG\\ puts its outputs in <output>\\RPG\\ instead of all in one folder.");
-		changed |= ImGui::Checkbox("Add folders recursively", &settings_.recursive);
-		changed |= ImGui::Checkbox("Delete sources after a successful conversion", &settings_.out.deleteSource);
+		changed |= CheckboxWrap("Add folders recursively", &settings_.recursive);
+		changed |= CheckboxWrap("Delete sources after a successful conversion", &settings_.out.deleteSource);
 		Tip("Only after the output was written completely and, with Verify on, compared with the source.");
 		ImGui::Unindent();
 	}
 
 	// --- Engine
-	if (ImGui::CollapsingHeader("Performance and safety", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader("Performance and safety", MobileLayout() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Indent();
-		changed |= ImGui::Checkbox("Verify every output", &settings_.engine.verify);
+		changed |= CheckboxWrap("Verify every output", &settings_.engine.verify);
 		Tip("Decode the new image again and compare it byte for byte with the source. Uses no disk space: the comparison runs as it decodes.");
-		changed |= ImGui::Checkbox("Repack compressed images through RAM", &settings_.engine.repackInRam);
+		changed |= CheckboxWrap("Repack compressed images through RAM", &settings_.engine.repackInRam);
 		Tip("CHD -> CSO and the like: decompress into memory and compress from there, without a temporary ISO on disk. "
 			"Images that don't fit the RAM budget fall back to a temporary ISO.");
 
 		row("RAM budget");
 		bool autoRam = settings_.engine.ramBudget == 0;
-		if (ImGui::Checkbox("Automatic##ram", &autoRam)) {
+		if (CheckboxWrap("Automatic##ram", &autoRam)) {
 			settings_.engine.ramBudget = autoRam ? 0 : (DefaultRamBudget() >> 20 << 20);
 			changed = true;
 		}
 		if (!autoRam) {
-			ImGui::SameLine();
-			ImGui::SetNextItemWidth(em * 10);
+			SameLineDesktop();
+			ItemWidthEm(10);
 			int mb = (int)(settings_.engine.ramBudget >> 20);
 			int maxMb = (int)std::max<uint64_t>(TotalRam() >> 20, 1024);
 			if (ImGui::SliderInt("##rammb", &mb, 256, maxMb, "%d MB", ImGuiSliderFlags_Logarithmic)) {
@@ -300,18 +280,18 @@ void App::DrawSettings() {
 				changed = true;
 			}
 		}
-		ImGui::SameLine();
+		SameLineDesktop();
 		ImGui::TextDisabled("now %s of %s total, %s free", HumanBytes(RamBudget::Get().Capacity()).c_str(), HumanBytes(TotalRam()).c_str(),
 			HumanBytes(AvailableRam()).c_str());
 
 		row("Temporary ISOs in");
 		std::string tmp = settings_.engine.tempDir;
-		ImGui::SetNextItemWidth(em * 22);
+		ItemWidthEm(22);
 		if (InputStringHint("##tempdir", "(the output folder)", &tmp)) {
 			settings_.engine.tempDir = tmp;
 			changed = true;
 		}
-		ImGui::SameLine();
+		SameLineDesktop();
 		if (ImGui::Button("Browse...##tmp"))
 			PickFolder([this](const std::string &d) {
 				settings_.engine.tempDir = d;
@@ -333,7 +313,7 @@ void App::DrawSettings() {
 			changed = true;
 		}
 		HelpMarker("iPBP and mCSO worker threads. mCSO picks this up at the next start of ISOPackager.");
-		changed |= ImGui::Checkbox("Run at lower priority", &settings_.engine.lowPriority);
+		changed |= CheckboxWrap("Run at lower priority", &settings_.engine.lowPriority);
 		Tip("Keeps the computer responsive while compressing.");
 		ImGui::Unindent();
 	}
@@ -344,7 +324,7 @@ void App::DrawSettings() {
 #endif
 
 	// --- CHD
-	if (ImGui::CollapsingHeader("CHD (CHDmodern)", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader("CHD (CHDmodern)", MobileLayout() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Indent();
 		ChdSettings &c = settings_.chd;
 		row("Hunk size");
@@ -353,10 +333,11 @@ void App::DrawSettings() {
 				   "better; every read decompresses a whole hunk.");
 		ImGui::AlignTextToFramePadding();
 		ImGui::TextUnformatted("Codecs");
-		ImGui::SameLine(labelW);
+		SameLineDesktop(labelW);
 		const float codecX = ImGui::GetCursorPosX();
+		const float codecHalf = ImGui::GetContentRegionAvail().x * 0.5f;  // mobile: two per row
 		bool def = c.codecs.empty();
-		if (ImGui::Checkbox("chdman default (lzma, zlib, huff, flac)", &def)) {
+		if (CheckboxWrap("chdman default (lzma, zlib, huff, flac)", &def)) {
 			if (def)
 				c.codecs.clear();
 			else
@@ -366,16 +347,18 @@ void App::DrawSettings() {
 		if (!def) {
 			// Own row, lined up under the default checkbox.
 			ImGui::SetCursorPosX(codecX);
-			bool first = true;
+			int idx = 0;
 			for (const std::string &name : ChdCodecChoices()) {
-				if (!first)
+				if (idx > 0 && !MobileLayout())
 					ImGui::SameLine();
-				first = false;
+				else if (idx % 2 == 1)
+					ImGui::SameLine(codecX + codecHalf);
+				++idx;
 				uint32_t cc = FourCC(name.c_str());
 				bool on = std::find(c.codecs.begin(), c.codecs.end(), cc) != c.codecs.end();
 				ImGui::PushID(name.c_str());
 				ImGui::BeginDisabled(!on && c.codecs.size() >= 4);
-				if (ImGui::Checkbox(name.c_str(), &on)) {
+				if (CheckboxWrap(name.c_str(), &on)) {
 					if (on)
 						c.codecs.push_back(cc);
 					else
@@ -388,14 +371,17 @@ void App::DrawSettings() {
 				ImGui::PopID();
 			}
 			ImGui::SetCursorPosX(codecX);
-			ImGui::TextDisabled("Each hunk uses whichever codec makes it smallest. zstd decodes fastest; lzma is smallest. Up to 4.");
+			if (MobileLayout())
+				HelpMarker("Each hunk uses whichever codec makes it smallest. zstd decodes fastest; lzma is smallest. Up to 4.");
+			else
+				ImGui::TextDisabled("Each hunk uses whichever codec makes it smallest. zstd decodes fastest; lzma is smallest. Up to 4.");
 		}
 		DrawAddToBenchmark(MakeChdCase(c), "chd");
 		ImGui::Unindent();
 	}
 
 	// --- PBP
-	if (ImGui::CollapsingHeader("EBOOT.PBP (iPBP)", ImGuiTreeNodeFlags_DefaultOpen)) {
+	if (ImGui::CollapsingHeader("EBOOT.PBP (iPBP)", MobileLayout() ? 0 : ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Indent();
 		PbpSettings &c = settings_.pbp;
 		row("Compression");
@@ -410,12 +396,12 @@ void App::DrawSettings() {
 		}
 		HelpMarker("Real PSPs need PSP/GAME/<folder>/EBOOT.PBP; PPSSPP loads both.");
 		row("Content ID");
-		ImGui::SetNextItemWidth(em * 22);
+		ItemWidthEm(22);
 		changed |= InputStringHint("##cid", "UP0000-<DISC_ID>_00-0000000000000000", &c.contentId);
 		row("Boot screen PNG");
-		ImGui::SetNextItemWidth(em * 22);
+		ItemWidthEm(22);
 		changed |= InputStringHint("##png", "(none) 480x272", &c.startDatPng);
-		ImGui::SameLine();
+		SameLineDesktop();
 		if (ImGui::Button("Browse...##png")) {
 			browserThen_ = [this](const std::vector<std::string> &r) {
 				if (!r.empty()) {
@@ -431,18 +417,18 @@ void App::DrawSettings() {
 				browser_.Open(FileBrowser::PickFiles, "Boot screen PNG");
 			}
 		}
-		changed |= ImGui::Checkbox("Trim extracted ISOs to their ISO9660 size", &c.trimOnExtract);
+		changed |= CheckboxWrap("Trim extracted ISOs to their ISO9660 size", &c.trimOnExtract);
 		Tip("A PBP stores whole 16-sector blocks; trimming gives back the exact dump size.");
-		changed |= ImGui::Checkbox("Check block MACs when reading PBPs", &c.verifyMacs);
+		changed |= CheckboxWrap("Check block MACs when reading PBPs", &c.verifyMacs);
 		DrawAddToBenchmark(MakePbpCase(c), "pbp");
 		ImGui::Unindent();
 	}
 
-	changed |= DrawRvzSection(Format::RVZ, "RVZ (iRVZ, GameCube and Wii)", true);
-	changed |= DrawRvzSection(Format::WIA, "WIA (iRVZ, GameCube and Wii)", false);
+	changed |= DrawRvzSection(Format::RVZ, MobileLayout() ? "RVZ (iRVZ)" : "RVZ (iRVZ, GameCube and Wii)", true);
+	changed |= DrawRvzSection(Format::WIA, MobileLayout() ? "WIA (iRVZ)" : "WIA (iRVZ, GameCube and Wii)", false);
 	DrawZarSection(true, &changed);
 #ifdef ISOPK_WITH_CSO
-	changed |= DrawCsoSection(Format::CSO2, "CSO v2 (maxcso, experimental)", false);
+	changed |= DrawCsoSection(Format::CSO2, MobileLayout() ? "CSO v2 (experimental)" : "CSO v2 (maxcso, experimental)", false);
 	changed |= DrawCsoSection(Format::DAX, "DAX (maxcso)", false);
 #endif
 
@@ -460,6 +446,10 @@ void App::DrawSettings() {
 		}
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			ApplyUiStyle();
+		row("Layout");
+		if (ImGui::Combo("##layout", &settings_.uiLayout, "Automatic (mobile on phones and tablets)\0Desktop\0Mobile\0"))
+			changed = true;
+		HelpMarker("The button in the middle at the bottom switches between the two as well.");
 		ImGui::Unindent();
 	}
 
@@ -473,8 +463,10 @@ void App::DrawSettings() {
 		addTarget_ = settings_.target;
 		changed = true;
 	}
-	ImGui::SameLine();
-	ImGui::TextDisabled("Saved automatically to %s", settingsPath_.c_str());
+	SameLineDesktop();
+	ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+	ImGui::TextWrapped("Saved automatically to %s", settingsPath_.c_str());
+	ImGui::PopStyleColor();
 	if (changed)
 		SettingsChanged();
 }
@@ -513,7 +505,7 @@ void App::DrawAddToBenchmark(const BenchCase &c, const char *id, const std::func
 		extra();
 	if (!benchNotice_.empty() && ImGui::GetTime() - benchNoticeAt_ < 3.0 &&
 		benchNotice_.find(std::string(FormatName(c.format)) + " " + c.label) != std::string::npos) {
-		ImGui::SameLine();
+		SameLineDesktop();
 		ImGui::TextColored(kOk, "%s", benchNotice_.c_str());
 	}
 	ImGui::PopID();
@@ -560,18 +552,31 @@ void App::StartBenchmark() {
 
 void App::DrawBenchmark() {
 	const float em = ImGui::GetFontSize();
-	const bool running = benchRunning_;
-
 	ImGui::BeginChild("##benchcfg", ImVec2(em * 24, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_ResizeX);
+	DrawBenchConfig();
+	ImGui::EndChild();
+	ImGui::SameLine();
+	ImGui::BeginChild("##benchres", ImVec2(0, 0));
+	DrawBenchResults();
+	ImGui::EndChild();
+}
+
+// Images, methods and options. The mobile layout puts it above the results instead of beside them.
+void App::DrawBenchConfig() {
+	const float em = ImGui::GetFontSize();
+	const bool running = benchRunning_, mobile = MobileLayout();
+	auto smallButton = [mobile](const char *label) { return mobile ? ImGui::Button(label) : ImGui::SmallButton(label); };
+
 	ImGui::SeparatorText("Images");
 	ImGui::BeginDisabled(running);
-	if (ImGui::Button("Add files..."))
+	const float w2 = mobile ? SplitWidth(2) : 0;
+	if (mobile ? BigButton("Add files", w2, 2.4f) : ImGui::Button("Add files..."))
 		PickFiles([this](const std::vector<std::string> &f) { ScanAsync(f, true); });
 	ImGui::SameLine();
-	if (ImGui::Button("Add folder..."))
+	if (mobile ? BigButton("Add folder", w2, 2.4f) : ImGui::Button("Add folder..."))
 		PickFolder([this](const std::string &d) { ScanAsync({ d }, true); });
-	ImGui::SameLine();
-	if (ImGui::Button("From queue")) {
+	SameLineDesktop();
+	if (mobile ? BigButton("Add the queued images", -FLT_MIN, 2.2f) : ImGui::Button("From queue")) {
 		for (auto &j : queue_.Jobs()) {
 			bool dup = false;
 			for (auto &b : benchInputs_)
@@ -581,7 +586,7 @@ void App::DrawBenchmark() {
 		}
 	}
 	ImGui::EndDisabled();
-	if (ImGui::BeginListBox("##benchinputs", ImVec2(-FLT_MIN, em * 5))) {
+	if (ImGui::BeginListBox("##benchinputs", ImVec2(-FLT_MIN, em * (mobile ? 7 : 5)))) {
 		int remove = -1;
 		for (int i = 0; i < (int)benchInputs_.size(); ++i) {
 			ImGui::PushID(i);
@@ -595,8 +600,11 @@ void App::DrawBenchmark() {
 			ImGui::SetItemTooltip("%s", benchInputs_[i].path.c_str());
 			ImGui::PopID();
 		}
-		if (benchInputs_.empty())
-			ImGui::TextDisabled("No images. Compressed ones are decoded first.");
+		if (benchInputs_.empty()) {
+			ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+			ImGui::TextWrapped("No images. Compressed ones are decoded first.");
+			ImGui::PopStyleColor();
+		}
 		ImGui::EndListBox();
 		if (remove >= 0 && !running)
 			benchInputs_.erase(benchInputs_.begin() + remove);
@@ -606,19 +614,26 @@ void App::DrawBenchmark() {
 	{
 		int remove = -1;
 		const float rowH = ImGui::GetFrameHeight();
-		if (ImGui::BeginChild("##benchcases", ImVec2(0, std::min(em * 14, std::max<float>(rowH * 2, (rowH + 4) * (float)benchCases_.size() + 8))),
-				ImGuiChildFlags_Borders)) {
+		// Mobile: tall enough for every method (the page scrolls, not this list).
+		const float listH = mobile ? (rowH + ImGui::GetStyle().ItemSpacing.y) * (float)std::max<size_t>(1, benchCases_.size()) + ImGui::GetStyle().WindowPadding.y * 2
+								   : std::min(em * 14, std::max<float>(rowH * 2, (rowH + 4) * (float)benchCases_.size() + 8));
+		if (ImGui::BeginChild("##benchcases", ImVec2(0, listH), ImGuiChildFlags_Borders)) {
 			for (int i = 0; i < (int)benchCases_.size(); ++i) {
 				const BenchCase &c = benchCases_[i];
 				ImGui::PushID(i);
 				ImGui::BeginDisabled(running);
-				if (ImGui::SmallButton("x"))
+				if (smallButton("x"))
 					remove = i;
 				ImGui::EndDisabled();
 				ImGui::SetItemTooltip("Remove from the benchmark");
 				ImGui::SameLine();
+				if (mobile)
+					ImGui::AlignTextToFramePadding();
 				ImGui::TextColored(FormatColor(c.format), "%s", FormatName(c.format));
-				ImGui::SameLine(em * 5.5f);
+				if (mobile)
+					ImGui::SameLine();
+				else
+					ImGui::SameLine(em * 5.5f);
 				ImGui::TextUnformatted(c.label.c_str());
 				ImGui::PopID();
 			}
@@ -635,7 +650,7 @@ void App::DrawBenchmark() {
 	ImGui::TextWrapped("Add methods with \"Add to benchmark\" under each format in Settings.");
 	ImGui::PopStyleColor();
 	ImGui::BeginDisabled(running);
-	if (ImGui::SmallButton("Defaults")) {
+	if (smallButton("Defaults")) {
 		benchCases_.clear();
 		for (const std::string &line : DefaultBenchCases()) {
 			BenchCase c;
@@ -649,13 +664,20 @@ void App::DrawBenchmark() {
 
 	ImGui::BeginDisabled(running);
 	ImGui::SeparatorText("Options");
-	ImGui::Checkbox("Verify (compare decoded images)", &benchCfg_.verify);
-	ImGui::Checkbox("Compress from RAM", &benchCfg_.sourceInRam);
+	CheckboxWrap("Verify (compare decoded images)", &benchCfg_.verify);
+	CheckboxWrap("Compress from RAM", &benchCfg_.sourceInRam);
 	Tip("Load each image into memory first, so disk speed doesn't show in the compression times.");
-	ImGui::SetNextItemWidth(em * 7);
-	ImGui::InputInt("Random reads", &benchCfg_.reads, 500, 2000);
+	if (mobile) {
+		SettingLabel("Random reads");
+		ImGui::InputInt("##reads", &benchCfg_.reads, 500, 2000);
+	} else {
+		ImGui::SetNextItemWidth(em * 7);
+		ImGui::InputInt("Random reads", &benchCfg_.reads, 500, 2000);
+	}
 	benchCfg_.reads = std::clamp(benchCfg_.reads, 0, 1000000);
 	Tip("Per image, each from a block or hunk not read before, so every read pays a full decompression (like an emulator seeking).");
+	if (mobile)
+		ImGui::TextUnformatted("Results folder");
 	ImGui::SetNextItemWidth(-FLT_MIN);
 	InputStringHint("##workdir", "results folder", &benchCfg_.workDir);
 	ImGui::EndDisabled();
@@ -663,21 +685,23 @@ void App::DrawBenchmark() {
 	ImGui::Spacing();
 	if (!running) {
 		ImGui::BeginDisabled(benchInputs_.empty());
-		if (WideButton("Run benchmark", 10))
+		if (mobile ? BigButton("Run benchmark") : WideButton("Run benchmark", 10))
 			StartBenchmark();
 		ImGui::EndDisabled();
 	} else {
-		if (WideButton("Cancel", 10))
+		if (mobile ? BigButton("Cancel benchmark") : WideButton("Cancel", 10))
 			benchCancel_ = true;
 	}
 	if (queue_.Busy() && !running) {
-		ImGui::SameLine();
+		SameLineDesktop();
 		ImGui::TextColored(kWarn, "Queue running: timings will suffer");
 	}
-	ImGui::EndChild();
+}
 
-	ImGui::SameLine();
-	ImGui::BeginChild("##benchres", ImVec2(0, 0));
+// Progress, the size/speed chart and the result rows (cards in the mobile layout).
+void App::DrawBenchResults() {
+	const float em = ImGui::GetFontSize();
+	const bool running = benchRunning_, mobile = MobileLayout();
 	std::vector<BenchRow> rows;
 	std::string what;
 	double step, total;
@@ -692,6 +716,25 @@ void App::DrawBenchmark() {
 		ImGui::TextUnformatted(what.c_str());
 		ImGui::ProgressBar((float)step, ImVec2(-FLT_MIN, 0));
 		ImGui::ProgressBar((float)total, ImVec2(-FLT_MIN, em * 0.4f), "");
+	} else if (mobile) {
+		const float w3 = SplitWidth(hooks_.reveal ? 3 : 2);
+		if (BigButton("CSV", w3, 2.2f)) {
+			std::string csv = BenchCsvHeader() + "\n";
+			for (auto &r : rows)
+				csv += BenchCsvLine(r) + "\n";
+			ImGui::SetClipboardText(csv.c_str());
+		}
+		if (hooks_.reveal) {
+			ImGui::SameLine();
+			if (BigButton("Folder", w3, 2.2f))
+				hooks_.reveal(benchCfg_.workDir.empty() ? DefaultBenchDir() : benchCfg_.workDir);
+		}
+		ImGui::SameLine();
+		if (BigButton("Clear", w3, 2.2f)) {
+			std::lock_guard<std::mutex> g(benchMutex_);
+			benchRows_.clear();
+			rows.clear();
+		}
 	} else {
 		if (ImGui::Button("Copy as CSV")) {
 			std::string csv = BenchCsvHeader() + "\n";
@@ -714,9 +757,22 @@ void App::DrawBenchmark() {
 
 	if (!rows.empty()) {
 		ImGui::SeparatorText("Size vs speed");
-		ImGui::SetNextItemWidth(em * 12);
-		ImGui::Combo("x axis", &benchChartX_, "Compression MB/s\0Decode seconds\0Random read ms\0");
-		DrawBenchChart(std::max(em * 12, ImGui::GetContentRegionAvail().y * 0.45f));
+		if (mobile) {
+			SettingLabel("Chart x axis");
+			ImGui::Combo("##xaxis", &benchChartX_, "Compression MB/s\0Decode seconds\0Random read ms\0");
+		} else {
+			ImGui::SetNextItemWidth(em * 12);
+			ImGui::Combo("x axis", &benchChartX_, "Compression MB/s\0Decode seconds\0Random read ms\0");
+		}
+		DrawBenchChart(mobile ? em * 16 : std::max(em * 12, ImGui::GetContentRegionAvail().y * 0.45f));
+	}
+	if (mobile) {
+		if (!rows.empty())
+			DrawMobileBenchResults(rows);
+		else if (!running)
+			ImGui::TextWrapped("Pick images and methods above and run. Each image is compressed with every method, decoded again and compared, and "
+							   "CSO/ZSO/CHD outputs get timed random reads.");
+		return;
 	}
 
 	ImGuiTableFlags tf = ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable |
@@ -797,7 +853,6 @@ void App::DrawBenchmark() {
 						   "and CSO/ZSO/CHD outputs get timed random reads. The chart then shows which settings give the smallest files for the time "
 						   "they cost.");
 	}
-	ImGui::EndChild();
 }
 
 void App::DrawBenchChart(float height) {
@@ -917,7 +972,7 @@ void App::DrawLog() {
 		log_.clear();
 	}
 	ImGui::SameLine();
-	ImGui::Checkbox("Auto-scroll", &logAutoScroll_);
+	CheckboxWrap("Auto-scroll", &logAutoScroll_);
 	ImGui::BeginChild("##logtext", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
 	{
 		std::lock_guard<std::mutex> g(logMutex_);
@@ -948,19 +1003,19 @@ void App::DrawAbout() {
 	ImGui::Text("ISOPackager %s", ISOPK_VERSION);
 	ImGui::TextDisabled("Compress, extract, repack and benchmark disc images.");
 	ImGui::Spacing();
-	ImGui::Text("Libraries: %s, Dear ImGui %s", LibraryVersions().c_str(), IMGUI_VERSION);
-	ImGui::Text("System: %s, %u cores, %s RAM", PlatformName().c_str(), CpuCount(), HumanBytes(TotalRam()).c_str());
-	ImGui::Text("Settings: %s", settingsPath_.c_str());
+	ImGui::TextWrapped("Libraries: %s, Dear ImGui %s", LibraryVersions().c_str(), IMGUI_VERSION);
+	ImGui::TextWrapped("System: %s, %u cores, %s RAM", PlatformName().c_str(), CpuCount(), HumanBytes(TotalRam()).c_str());
+	ImGui::TextWrapped("Settings: %s", settingsPath_.c_str());
 	ImGui::Spacing();
 	ImGui::SeparatorText("Formats");
 	for (Format f : OutputFormats()) {
 		FormatBadge(f);
 		ImGui::SameLine(ImGui::GetFontSize() * 4);
-		ImGui::TextUnformatted(FormatDescription(f));
+		ImGui::TextWrapped("%s", FormatDescription(f));
 	}
 	FormatBadge(Format::ZAR);
 	ImGui::SameLine(ImGui::GetFontSize() * 4);
-	ImGui::Text("%s - made with Create ZArchive, extracted to a folder when added", FormatDescription(Format::ZAR));
+	ImGui::TextWrapped("%s - made with Create ZArchive, extracted to a folder when added", FormatDescription(Format::ZAR));
 	ImGui::Spacing();
 	ImGui::SeparatorText("Links");
 	const char *links[][2] = { { "ISOPackager", "https://github.com/LunaMoo/ISOPackager" }, { "maxcso (mCSO)", "https://github.com/LunaMoo/maxcso" },
@@ -974,18 +1029,19 @@ void App::DrawAbout() {
 		} else {
 			ImGui::TextUnformatted(l[0]);
 		}
-		ImGui::SameLine();
+		SameLineDesktop();
 		ImGui::TextDisabled("%s", l[1]);
 	}
 	ImGui::Spacing();
 	ImGui::Separator();
-	ImGui::TextUnformatted("Made by Claude AI based on LunaMoo idea, released under GPL 3.0 license.");
+	ImGui::TextWrapped("Made by Claude AI based on LunaMoo idea, released under GPL 3.0 license.");
 }
 
 // ---- Status bar and dialogs -------------------------------------------------------------------
 
 void App::DrawStatusBar() {
 	ImGui::Separator();
+	ImGui::AlignTextToFramePadding();
 	auto c = queue_.Count();
 	if (scansRunning_ > 0) {
 		ImGui::TextColored(kWarn, "Scanning...");
@@ -1006,6 +1062,19 @@ void App::DrawStatusBar() {
 		ImGui::SameLine();
 		ImGui::Text("%s -> %s", HumanBytes(c.inBytes).c_str(), HumanBytes(c.outBytes).c_str());
 	}
+
+	// The layout switch, in the middle of the bar (the mobile layout has it in the middle of its
+	// navigation bar, so it's in the same place in both).
+	{
+		const float em = ImGui::GetFontSize();
+		const float bw = ImGui::CalcTextSize("Mobile layout").x + ImGui::GetStyle().FramePadding.x * 2 + em;
+		ImGui::SameLine();
+		const float centre = (ImGui::GetWindowWidth() - bw) * 0.5f;
+		if (ImGui::GetCursorPosX() + em < centre)
+			ImGui::SetCursorPosX(centre);
+		DrawLayoutToggle(bw, 0);
+	}
+
 	std::string right = Fmt("RAM %s / %s   ->  %s", HumanBytes(RamBudget::Get().InUse()).c_str(), HumanBytes(RamBudget::Get().Capacity()).c_str(),
 		OutputFolderLabel().c_str());
 	float w = ImGui::CalcTextSize(right.c_str()).x;
@@ -1028,17 +1097,36 @@ void App::DrawModals() {
 		ImGui::OpenPopup("Quit?");
 		quitRequested_ = false;
 	}
-	if (ImGui::BeginPopupModal("Quit?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextUnformatted("Conversions or a benchmark are still running.");
-		ImGui::TextUnformatted("Quitting cancels them; finished outputs are kept, partial ones deleted.");
-		if (ImGui::Button("Cancel and quit")) {
+	// On a phone the dialogs take most of the width and wrap their text; buttons fill the row.
+	const bool mobile = MobileLayout();
+	const ImGuiViewport *vp = ImGui::GetMainViewport();
+	auto mobileDialog = [&] {
+		if (mobile) {
+			ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.92f, 0), ImGuiCond_Always);
+		}
+	};
+	const ImGuiWindowFlags dlgFlags = mobile ? ImGuiWindowFlags_NoMove : ImGuiWindowFlags_AlwaysAutoResize;
+	auto dlgButton = [&](const char *label) { return mobile ? BigButton(label, SplitWidth(2), 2.4f) : ImGui::Button(label); };
+	auto dlgText = [&](const char *text) {
+		if (mobile)
+			ImGui::TextWrapped("%s", text);
+		else
+			ImGui::TextUnformatted(text);
+	};
+
+	mobileDialog();
+	if (ImGui::BeginPopupModal("Quit?", nullptr, dlgFlags)) {
+		dlgText("Conversions or a benchmark are still running.");
+		dlgText("Quitting cancels them; finished outputs are kept, partial ones deleted.");
+		if (dlgButton("Cancel and quit")) {
 			queue_.CancelAll();
 			benchCancel_ = true;
 			quitConfirmed_ = true;
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Keep working")) {
+		if (dlgButton("Keep working")) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::EndPopup();
@@ -1048,15 +1136,19 @@ void App::DrawModals() {
 		ImGui::OpenPopup("Delete sources?");
 		showOverwriteWarning_ = false;
 	}
-	if (ImGui::BeginPopupModal("Delete sources?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-		ImGui::TextUnformatted("Each source image will be deleted after its conversion succeeds.");
-		if (!settings_.engine.verify)
-			ImGui::TextColored(kWarn, "Verify is off: outputs won't be checked before their source is deleted.");
-		if (ImGui::Button("OK")) {
+	mobileDialog();
+	if (ImGui::BeginPopupModal("Delete sources?", nullptr, dlgFlags)) {
+		dlgText("Each source image will be deleted after its conversion succeeds.");
+		if (!settings_.engine.verify) {
+			ImGui::PushStyleColor(ImGuiCol_Text, kWarn);
+			dlgText("Verify is off: outputs won't be checked before their source is deleted.");
+			ImGui::PopStyleColor();
+		}
+		if (dlgButton("OK")) {
 			ImGui::CloseCurrentPopup();
 		}
 		ImGui::SameLine();
-		if (ImGui::Button("Don't delete")) {
+		if (dlgButton("Don't delete")) {
 			settings_.out.deleteSource = false;
 			SettingsChanged();
 			ImGui::CloseCurrentPopup();

@@ -23,6 +23,8 @@ public:
 	// Folders offered on the left (home, drives, storage roots).
 	void SetPlaces(const std::vector<std::pair<std::string, std::string>> &namedPaths) { places_ = namedPaths; }
 	std::string CurrentDir() const { return dir_; }
+	// Mobile layout: fills the screen, places in a drop-down, one tap opens a folder.
+	void SetMobile(bool on) { mobile_ = on; }
 
 private:
 	struct Entry {
@@ -35,7 +37,7 @@ private:
 
 	Mode mode_ = PickFiles;
 	std::string title_, dir_, pathEdit_, error_;
-	bool open_ = false, openRequested_ = false, showAll_ = false;
+	bool open_ = false, openRequested_ = false, showAll_ = false, mobile_ = false;
 	std::vector<Entry> entries_;
 	std::vector<bool> selected_;
 	std::vector<std::string> result_;

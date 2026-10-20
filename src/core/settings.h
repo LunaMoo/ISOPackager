@@ -149,6 +149,7 @@ struct Settings {
 	std::vector<std::string> benchCases = DefaultBenchCases();  // serialised BenchCase list (bench.h)
 	int uiTheme = 0;            // 0 dark, 1 light, 2 classic
 	float uiScale = 1.0f;       // on top of the display's DPI scale
+	int uiLayout = 0;           // 0 automatic (mobile on phones and tablets), 1 desktop, 2 mobile
 
 	// The settings of an mCSO container (CSO, ZSO, CSO v2, DAX) or an iRVZ one (RVZ, WIA).
 	CsoSettings &Cso(Format f);

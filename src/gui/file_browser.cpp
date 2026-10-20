@@ -1,12 +1,14 @@
 #include "gui/file_browser.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 #include "imgui.h"
 
 #include "core/formats.h"
 #include "core/util.h"
+#include "gui/widgets.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -119,31 +121,59 @@ bool FileBrowser::Draw() {
 		return false;
 	bool confirmed = false;
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
-	ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.8f, vp->Size.y * 0.8f), ImGuiCond_Appearing);
-	if (!ImGui::BeginPopupModal("##filebrowser", &open_, ImGuiWindowFlags_NoSavedSettings)) {
+	if (mobile_) {
+		ImGui::SetNextWindowPos(vp->WorkPos, ImGuiCond_Always);
+		ImGui::SetNextWindowSize(vp->WorkSize, ImGuiCond_Always);
+	} else {
+		ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.8f, vp->Size.y * 0.8f), ImGuiCond_Appearing);
+	}
+	if (!ImGui::BeginPopupModal("##filebrowser", &open_, ImGuiWindowFlags_NoSavedSettings | (mobile_ ? ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize : 0))) {
 		open_ = false;
 		return false;
 	}
-	ImGui::TextUnformatted(title_.c_str());
+	if (mobile_)
+		ImGui::TextWrapped("%s", title_.c_str());
+	else
+		ImGui::TextUnformatted(title_.c_str());
 	ImGui::Separator();
 
+	if (mobile_) {
+		// Phone: the places as a drop-down, then Up beside the path, Refresh and All files below.
+		ImGui::SetNextItemWidth(-FLT_MIN);
+		std::string cur = "Places";
+		for (auto &pl : places_)
+			if (pl.second == dir_)
+				cur = pl.first;
+		if (ImGui::BeginCombo("##places", cur.c_str())) {
+			for (auto &pl : places_) {
+				std::error_code ec;
+				if (!fs::is_directory(U8Path(pl.second), ec))
+					continue;
+				if (ImGui::Selectable(pl.first.c_str(), dir_ == pl.second))
+					Navigate(pl.second);
+			}
+			ImGui::EndCombo();
+		}
+	}
+
 	// Path bar.
-	if (ImGui::ArrowButton("##up", ImGuiDir_Up)) {
+	if (mobile_ ? ImGui::Button("Up", ImVec2(ImGui::GetFrameHeight() * 1.6f, 0)) : ImGui::ArrowButton("##up", ImGuiDir_Up)) {
 		fs::path parent = U8Path(dir_).parent_path();
 		if (!parent.empty())
 			Navigate(PathU8(parent));
 	}
 	ImGui::SetItemTooltip("Parent folder");
 	ImGui::SameLine();
-	ImGui::SetNextItemWidth(-ImGui::GetFrameHeight() * 6);
+	ImGui::SetNextItemWidth(mobile_ ? -FLT_MIN : -ImGui::GetFrameHeight() * 6);
 	char buf[2048];
 	snprintf(buf, sizeof(buf), "%s", pathEdit_.c_str());
 	if (ImGui::InputText("##path", buf, sizeof(buf), ImGuiInputTextFlags_EnterReturnsTrue))
 		Navigate(buf);
 	else
 		pathEdit_ = buf;
-	ImGui::SameLine();
+	if (!mobile_)
+		ImGui::SameLine();
 	if (ImGui::Button("Refresh"))
 		Refresh();
 	if (mode_ == PickFiles) {
@@ -152,19 +182,21 @@ bool FileBrowser::Draw() {
 			Refresh();
 	}
 
-	const float footer = ImGui::GetFrameHeightWithSpacing() * 2.2f;
+	const float footer = ImGui::GetFrameHeightWithSpacing() * (mobile_ ? 3.4f : 2.2f);
 	// Places.
-	ImGui::BeginChild("##places", ImVec2(ImGui::GetFontSize() * 10, -footer), ImGuiChildFlags_Borders);
-	for (auto &pl : places_) {
-		std::error_code ec;
-		if (!fs::is_directory(U8Path(pl.second), ec))
-			continue;
-		if (ImGui::Selectable(pl.first.c_str(), dir_ == pl.second))
-			Navigate(pl.second);
-		ImGui::SetItemTooltip("%s", pl.second.c_str());
+	if (!mobile_) {
+		ImGui::BeginChild("##places", ImVec2(ImGui::GetFontSize() * 10, -footer), ImGuiChildFlags_Borders);
+		for (auto &pl : places_) {
+			std::error_code ec;
+			if (!fs::is_directory(U8Path(pl.second), ec))
+				continue;
+			if (ImGui::Selectable(pl.first.c_str(), dir_ == pl.second))
+				Navigate(pl.second);
+			ImGui::SetItemTooltip("%s", pl.second.c_str());
+		}
+		ImGui::EndChild();
+		ImGui::SameLine();
 	}
-	ImGui::EndChild();
-	ImGui::SameLine();
 
 	// Entries.
 	ImGui::BeginChild("##entries", ImVec2(0, -footer), ImGuiChildFlags_Borders);
@@ -176,10 +208,15 @@ bool FileBrowser::Draw() {
 			const Entry &e = entries_[i];
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
-			std::string label = (e.dir ? "[DIR] " : "      ") + e.name + "##" + std::to_string(i);
-			if (ImGui::Selectable(label.c_str(), selected_[i], ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
+			std::string label = (e.dir ? (mobile_ ? "> " : "[DIR] ") : (mobile_ ? "  " : "      ")) + e.name + "##" + std::to_string(i);
+			const float rowH = mobile_ ? ImGui::GetFrameHeight() : 0;
+			if (ImGui::Selectable(label.c_str(), selected_[i], ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, rowH)) &&
+				!(mobile_ && TouchScrolled())) {
 				ImGuiIO &io = ImGui::GetIO();
-				if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+				if (mobile_ && e.dir && mode_ != PickAny) {
+					// One tap opens a folder (folder mode: "Use this folder" picks the one shown).
+					navigateTo = PathU8(U8Path(dir_) / U8Path(e.name));
+				} else if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
 					if (e.dir)
 						navigateTo = PathU8(U8Path(dir_) / U8Path(e.name));
 					else if (mode_ == PickFiles || mode_ == PickAny) {
@@ -205,6 +242,8 @@ bool FileBrowser::Draw() {
 		}
 		ImGui::EndTable();
 	}
+	if (mobile_)
+		TouchScroll();
 	if (entries_.empty())
 		ImGui::TextDisabled(mode_ == PickFolder ? "(no subfolders)" : mode_ == PickAny ? "(empty folder)" : "(no disc images here)");
 	ImGui::EndChild();
@@ -215,17 +254,22 @@ bool FileBrowser::Draw() {
 		ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", error_.c_str());
 	int count = (int)std::count(selected_.begin(), selected_.end(), true);
 	if (mode_ == PickFiles || mode_ == PickAny) {
-		ImGui::Text("%d selected (click to select several; double-click a folder to open it)", count);
-		if (mode_ == PickFiles && ImGui::Button("Select all images")) {
+		if (mobile_)
+			ImGui::TextWrapped(mode_ == PickAny ? "%d selected. Tap to select, double-tap a folder to open it." : "%d selected. Tap files to select them, a folder to open it.", count);
+		else
+			ImGui::Text("%d selected (click to select several; double-click a folder to open it)", count);
+		const float w3 = mobile_ ? std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3) : 0;
+		if (mode_ == PickFiles && ImGui::Button(mobile_ ? "Select all" : "Select all images", ImVec2(w3, 0))) {
 			for (size_t i = 0; i < entries_.size(); ++i)
 				selected_[i] = entries_[i].image;
 		}
-		if (mode_ == PickAny && ImGui::Button("Select all")) {
+		if (mode_ == PickAny && ImGui::Button("Select all", ImVec2(w3, 0))) {
 			std::fill(selected_.begin(), selected_.end(), true);
 		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(count == 0);
-		if (ImGui::Button("Add selected")) {
+		std::string add = mobile_ ? Fmt("Add (%d)###add", count) : std::string("Add selected");
+		if (ImGui::Button(add.c_str(), ImVec2(w3, 0))) {
 			for (size_t i = 0; i < entries_.size(); ++i)
 				if (selected_[i])
 					result_.push_back(PathU8(U8Path(dir_) / U8Path(entries_[i].name)));
@@ -237,14 +281,17 @@ bool FileBrowser::Draw() {
 		for (size_t i = 0; i < entries_.size(); ++i)
 			if (selected_[i])
 				target = PathU8(U8Path(dir_) / U8Path(entries_[i].name));
-		ImGui::Text("Folder: %s", target.c_str());
-		if (ImGui::Button("Use this folder")) {
+		if (mobile_)
+			ImGui::TextWrapped("Folder: %s", target.c_str());
+		else
+			ImGui::Text("Folder: %s", target.c_str());
+		if (ImGui::Button("Use this folder", ImVec2(mobile_ ? std::floor((ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) / 2) : 0, 0))) {
 			result_ = { target };
 			confirmed = true;
 		}
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Cancel")) {
+	if (ImGui::Button("Cancel", ImVec2(mobile_ ? ImGui::GetContentRegionAvail().x : 0, 0))) {
 		result_.clear();
 		open_ = false;
 		ImGui::CloseCurrentPopup();
