@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(ISOPackager VERSION 0.1.0 DESCRIPTION "Compress, extract, repack and benchmark disc images" LANGUAGES C CXX)
+project(ISOPackager VERSION 0.1.4 DESCRIPTION "Compress, extract, repack and benchmark disc images" LANGUAGES C CXX)
 
 # ISOPackager links mCSO (maxcso), CHDm (CHDmodern), iPBP, iRVZ and ZArchive statically, from the submodules in external/.
 # Everything is built from source, so the same tree builds on Windows, Linux, macOS, FreeBSD,
@@ -255,6 +255,7 @@ if(ISOPK_BUILD_GUI)
 
 	set(GUI_SOURCES
 		src/gui/app.cpp
+		src/gui/app_mobile.cpp
 		src/gui/app_panels.cpp
 		src/gui/file_browser.cpp
 		src/gui/widgets.cpp)

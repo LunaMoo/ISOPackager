@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="LunaMoo.ISOPackager" version="0.1.0.0"/>
+  <assemblyIdentity type="win32" name="LunaMoo.ISOPackager" version="0.1.4.0"/>
   <application xmlns="urn:schemas-microsoft-com:asm.v3">
     <windowsSettings>
       <!-- UTF-8 as the process code page (Windows 10 1903+): argv, fopen and the console speak UTF-8. -->

@@ -46,6 +46,9 @@ App::App(const PlatformHooks &hooks) : hooks_(hooks) {
 			benchCases_.push_back(c);
 	}
 	metaThread_ = std::thread([this] { MetaWorker(); });
+	mobile_ = WantMobile();
+	SetMobileLayout(mobile_);
+	browser_.SetMobile(mobile_);
 	ApplyUiStyle();
 }
 
@@ -71,8 +74,16 @@ App::~App() {
 }
 
 void App::ApplyUiStyle() {
-	float scale = hooks_.dpiScale * settings_.uiScale * (hooks_.touch ? 1.35f : 1.0f);
-	ApplyTheme(settings_.uiTheme, scale);
+	// The mobile layout's text is half again as big as the desktop's on the same screen. On a phone
+	// that knows its density it's sized physically: 16 * 1.2 = about 19 dp, a large body text.
+	float scale;
+	if (mobile_ && hooks_.touch && hooks_.density > 0) {
+		scale = hooks_.density * settings_.uiScale * 1.2f;
+	} else {
+		float layout = mobile_ ? (hooks_.touch ? 1.6f : 1.45f) : (hooks_.touch ? 1.35f : 1.0f);
+		scale = hooks_.dpiScale * settings_.uiScale * layout;
+	}
+	ApplyTheme(settings_.uiTheme, scale, mobile_);
 	ImGui::GetStyle().FontScaleDpi = scale;
 	appliedScale_ = scale;
 	appliedTheme_ = settings_.uiTheme;
@@ -93,7 +104,7 @@ bool App::RequestClose() {
 }
 
 bool App::Animating() const {
-	return queue_.Busy() || benchRunning_ || scansRunning_ > 0 || settingsDirty_;
+	return queue_.Busy() || benchRunning_ || scansRunning_ > 0 || settingsDirty_ || TouchScrollAnimating();
 }
 
 void App::SettingsChanged() {
@@ -131,6 +142,11 @@ void App::HandleArgs(const std::vector<std::string> &args) {
 			for (int k = 0; k < 5; ++k)
 				if (t == names[k])
 					requestTab_ = k;
+		} else if (args[i] == "--window" && i + 1 < args.size()) {
+			++i;  // the platform layer's (window size)
+		} else if (args[i] == "--layout" && i + 1 < args.size()) {
+			std::string l = ToLower(args[++i]);
+			settings_.uiLayout = l == "mobile" ? 2 : l == "desktop" ? 1 : 0;
 		} else if (args[i] == "--zar" && i + 1 < args.size()) {
 			StartCreateZar(args[++i]);
 		} else if (args[i] == "--start") {
@@ -275,11 +291,23 @@ void App::DrawZarDialog() {
 	}
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(std::min(vp->Size.x * 0.9f, ImGui::GetFontSize() * 44), 0), ImGuiCond_Appearing);
+	if (MobileLayout()) {
+		ImGui::SetNextWindowPos(vp->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+		ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x * 0.96f, 0), ImGuiCond_Always);
+	} else {
+		ImGui::SetNextWindowSize(ImVec2(std::min(vp->Size.x * 0.9f, ImGui::GetFontSize() * 44), 0), ImGuiCond_Appearing);
+	}
 	zarDlg_.open = ImGui::BeginPopupModal("Create ZArchive", nullptr, ImGuiWindowFlags_NoSavedSettings);
 	if (!zarDlg_.open)
 		return;
 	const float em = ImGui::GetFontSize();
+	const bool mobile = MobileLayout();
+	if (mobile)
+		ImGui::PushTextWrapPos(0.0f);  // popped before EndPopup
+	auto col = [&] {  // the value column on the desktop; the mobile layout puts values under their label
+		if (!mobile)
+			ImGui::SetCursorPosX(em * 6);
+	};
 	ZarSpec spec;
 	uint64_t size;
 	std::string error;
@@ -304,7 +332,7 @@ void App::DrawZarDialog() {
 
 	ImGui::AlignTextToFramePadding();
 	ImGui::TextUnformatted("Name");
-	ImGui::SameLine(em * 6);
+	SameLineDesktop(em * 6);
 	ImGui::SetNextItemWidth(-em * 3);
 	std::string name = spec.name;
 	if (ImGui::IsWindowAppearing())
@@ -318,13 +346,13 @@ void App::DrawZarDialog() {
 
 	ImGui::AlignTextToFramePadding();
 	ImGui::TextUnformatted("Folder");
-	ImGui::SameLine(em * 6);
+	SameLineDesktop(em * 6);
 	if (spec.rootDir.empty())
 		ImGui::TextDisabled("(none)");
 	else
 		ImGui::TextWrapped("%s", spec.rootDir.c_str());
 	Tip("Everything in this folder goes into the archive's root, the way the zarchive tool packs a folder.");
-	ImGui::SetCursorPosX(em * 6);
+	col();
 	if (ImGui::Button(spec.rootDir.empty() ? "Choose folder..." : "Change folder..."))
 		PickFolder([this](const std::string &d) {
 			{
@@ -344,7 +372,7 @@ void App::DrawZarDialog() {
 			MeasureZarAsync(copy, false);
 		});
 	if (!spec.rootDir.empty()) {
-		ImGui::SameLine();
+		SameLineDesktop();
 		if (ImGui::Button("Don't use a folder"))
 			change([](ZarSpec &z) { z.rootDir.clear(); });
 	}
@@ -352,15 +380,15 @@ void App::DrawZarDialog() {
 	ImGui::Spacing();
 	ImGui::AlignTextToFramePadding();
 	ImGui::TextUnformatted("Also add");
-	ImGui::SameLine(em * 6);
+	SameLineDesktop(em * 6);
 	if (spec.extras.empty())
 		ImGui::TextDisabled("(nothing else: optional)");
 	int removeAt = -1;
 	for (size_t i = 0; i < spec.extras.size(); ++i) {
 		if (i > 0)
-			ImGui::SetCursorPosX(em * 6);
+			col();
 		ImGui::PushID((int)i);
-		if (ImGui::SmallButton("x"))
+		if (mobile ? ImGui::Button("x") : ImGui::SmallButton("x"))
 			removeAt = (int)i;
 		ImGui::PopID();
 		ImGui::SameLine();
@@ -368,7 +396,7 @@ void App::DrawZarDialog() {
 	}
 	if (removeAt >= 0)
 		change([removeAt](ZarSpec &z) { z.extras.erase(z.extras.begin() + removeAt); });
-	ImGui::SetCursorPosX(em * 6);
+	col();
 	auto addExtras = [this](const std::vector<std::string> &paths) {
 		ZarSpec copy;
 		{
@@ -389,7 +417,7 @@ void App::DrawZarDialog() {
 			spec.SourceDir());
 	}
 	Tip("Discs or DLC folders from elsewhere. Each goes to the archive's root under its own name.");
-	ImGui::SameLine();
+	SameLineDesktop();
 	if (ImGui::Button("Add folder..."))
 		PickFolder([addExtras](const std::string &d) { addExtras({ d }); });
 
@@ -402,7 +430,7 @@ void App::DrawZarDialog() {
 	else
 		ImGui::Text("Total %s", HumanBytes(size).c_str());
 	ImGui::TextDisabled("Compression: %s", settings_.zar.Describe().c_str());
-	ImGui::SameLine();
+	SameLineDesktop();
 	if (ImGui::SmallButton("Change...")) {
 		requestTab_ = 1;
 		ImGui::CloseCurrentPopup();
@@ -416,7 +444,7 @@ void App::DrawZarDialog() {
 	const bool ready = !name.empty() && (!spec.rootDir.empty() || !spec.extras.empty()) && (!measured || error.empty());
 	ImGui::BeginDisabled(!ready);
 	const bool keys = !browser_.IsOpen();
-	if (WideButton("Add to queue") || (keys && ready && ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive())) {
+	if ((mobile ? BigButton("Add to queue", SplitWidth(2), 2.4f) : WideButton("Add to queue")) || (keys && ready && ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive())) {
 		ZarSpec copy;
 		{
 			std::lock_guard<std::mutex> g(scanMutex_);
@@ -428,7 +456,7 @@ void App::DrawZarDialog() {
 	}
 	ImGui::EndDisabled();
 	ImGui::SameLine();
-	if (WideButton("Cancel") || (keys && ImGui::IsKeyPressed(ImGuiKey_Escape)))
+	if ((mobile ? BigButton("Cancel", SplitWidth(1), 2.4f) : WideButton("Cancel")) || (keys && ImGui::IsKeyPressed(ImGuiKey_Escape)))
 		ImGui::CloseCurrentPopup();
 
 	// The file browser opens over this dialog (a popup opened outside it would close it).
@@ -436,6 +464,10 @@ void App::DrawZarDialog() {
 		auto then = browserThen_;
 		browserThen_ = nullptr;
 		then(browser_.Result());
+	}
+	if (mobile) {
+		ImGui::PopTextWrapPos();
+		TouchScroll();
 	}
 	ImGui::EndPopup();
 }
@@ -447,8 +479,15 @@ std::string App::OutputFolderLabel() const {
 // ---- Frame ------------------------------------------------------------------------------------
 
 void App::Frame() {
-	if (settings_.uiTheme != appliedTheme_)
+	// Layout and theme changes apply between frames, never halfway through one.
+	if (WantMobile() != mobile_) {
+		mobile_ = WantMobile();
+		SetMobileLayout(mobile_);
+		browser_.SetMobile(mobile_);
 		ApplyUiStyle();
+	} else if (settings_.uiTheme != appliedTheme_) {
+		ApplyUiStyle();
+	}
 
 	// Collect finished scans.
 	{
@@ -485,6 +524,11 @@ void App::Frame() {
 	}
 	if (settingsDirty_ && Now() - settingsChangedAt_ > 1.0)
 		SaveSettingsNow();
+
+	if (mobile_) {
+		DrawMobile();
+		return;
+	}
 
 	const ImGuiViewport *vp = ImGui::GetMainViewport();
 	ImGui::SetNextWindowPos(vp->WorkPos);

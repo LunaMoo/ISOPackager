@@ -30,7 +30,11 @@ struct PlatformHooks {
 	std::function<void(const std::string &url)> openUrl;
 	// Called when the DPI scale or theme must be re-applied.
 	float dpiScale = 1.0f;
-	bool touch = false;  // phones and tablets: bigger targets, simpler layout
+	bool touch = false;  // phones, tablets and UWP: bigger targets
+	bool mobilePlatform = false;  // Android and iOS: the mobile layout is the default
+	// Physical density on phones and tablets (1 = 160 dpi, Android's dp), 0 when unknown. SDL's
+	// content scale is always 1 there, so the mobile layout sizes its text from this instead.
+	float density = 0;
 	std::string platformName;
 };
 
@@ -41,7 +45,7 @@ public:
 
 	// Files dropped on the window or passed on the command line.
 	void AddPaths(const std::vector<std::string> &paths);
-	// Command line: [--to FMT] [--start] [--zar FOLDER] [files...]
+	// Command line: [--to FMT] [--start] [--zar FOLDER] [--tab NAME] [--layout auto|desktop|mobile] [files...]
 	void HandleArgs(const std::vector<std::string> &args);
 	void Frame();
 
@@ -70,6 +74,8 @@ private:
 	bool DrawCsoSection(Format f, const char *header, bool open);
 	bool DrawRvzSection(Format f, const char *header, bool open);
 	void DrawBenchmark();
+	void DrawBenchConfig();
+	void DrawBenchResults();
 	void DrawLog();
 	void DrawAbout();
 	void DrawStatusBar();
@@ -94,6 +100,23 @@ private:
 	void DrawAddToBenchmark(const BenchCase &c, const char *id, const std::function<void()> &extra = nullptr);
 	void ApplyUiStyle();
 	std::string OutputFolderLabel() const;
+
+	// The mobile layout (app_mobile.cpp): one column, a page at a time, big targets, a navigation
+	// bar at the bottom with the layout switch in its centre. The desktop layout has the same switch
+	// in the centre of its status bar.
+	bool WantMobile() const;
+	void ToggleLayout();
+	void DrawLayoutToggle(float width, float height);
+	void DrawMobile();
+	void DrawMobileHeader();
+	void DrawMobileQueue();
+	void DrawMobileJobCard(const std::shared_ptr<Job> &j, std::shared_ptr<Job> *remove, std::shared_ptr<Job> *retry);
+	void DrawMobileQueueActions();
+	void DrawMobileBenchResults(const std::vector<BenchRow> &rows);
+	void DrawMobileLog();
+	void DrawMobileNav();
+	float MobileNavHeight() const;
+	float MobileActionsHeight() const;
 
 	PlatformHooks hooks_;
 	Settings settings_;
@@ -163,6 +186,13 @@ private:
 	float appliedScale_ = 0;
 	bool startWhenScanned_ = false;
 	int appliedTheme_ = -1;
+
+	// Mobile layout.
+	bool mobile_ = false;          // the layout drawn this frame
+	int mobilePage_ = 0;           // 0 queue, 1 settings, 2 benchmark, 3 log, 4 about
+	Job *mobileOpenJob_ = nullptr; // the queue card showing its actions
+	float mobileColX_ = 0, mobileColW_ = 0;  // the column, centred on wide screens
+	int mobileBenchSort_ = 0;      // result cards: 0 size, 1 compression speed, 2 decode, 3 random read, 4 image
 };
 
 }  // namespace isopk::gui
