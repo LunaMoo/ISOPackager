@@ -25,6 +25,13 @@
 #else
 #define ISOPK_TOUCH 0
 #endif
+// Phones and tablets: these start in the mobile layout. UWP is touch-friendly but mostly runs on
+// PCs and Xbox, so it starts in the desktop layout like every other platform.
+#if defined(__ANDROID__) || (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#define ISOPK_MOBILE_PLATFORM 1
+#else
+#define ISOPK_MOBILE_PLATFORM 0
+#endif
 
 using namespace isopk;
 
@@ -151,6 +158,7 @@ int main(int argc, char **argv) {
 	gui::PlatformHooks hooks;
 	hooks.dpiScale = scale;
 	hooks.touch = ISOPK_TOUCH;
+	hooks.mobilePlatform = ISOPK_MOBILE_PLATFORM;
 #if defined(__ANDROID__)
 	{
 		float ddpi = 0;

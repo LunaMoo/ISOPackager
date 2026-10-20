@@ -66,8 +66,8 @@ Built on these libraries, linked statically from the submodules in `external/`:
   finger-sized buttons, settings labelled above full-width controls with their help written out,
   queue entries as cards (tap one for its actions), drag-to-scroll, and Start / Cancel all always
   in reach above a bottom navigation bar. The button in the middle at the bottom of either layout
-  switches to the other; phones and tablets start in the mobile one (Settings > Appearance >
-  Layout: Automatic, Desktop or Mobile). On a wide window the mobile column stays phone-shaped,
+  switches to the other; Android and iOS start in the mobile one, every other platform (UWP included) in the desktop one
+  (Settings > Appearance > Layout: Automatic, Desktop or Mobile). On a wide window the mobile column stays phone-shaped,
   centred. To try it at a phone's size: `isopackager --layout mobile --window 412x900`.
 
 ## Command line

@@ -29,7 +29,8 @@ static const char *const kPageNames[] = { "Queue", "Settings", "Benchmark", "Log
 // ---- Switching layouts ------------------------------------------------------------------------
 
 bool App::WantMobile() const {
-	return settings_.uiLayout == 2 || (settings_.uiLayout == 0 && hooks_.touch);
+	// Automatic: mobile on Android and iOS, desktop everywhere else.
+	return settings_.uiLayout == 2 || (settings_.uiLayout == 0 && hooks_.mobilePlatform);
 }
 
 void App::ToggleLayout() {

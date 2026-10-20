@@ -447,7 +447,7 @@ void App::DrawSettings() {
 		if (ImGui::IsItemDeactivatedAfterEdit())
 			ApplyUiStyle();
 		row("Layout");
-		if (ImGui::Combo("##layout", &settings_.uiLayout, "Automatic (mobile on phones and tablets)\0Desktop\0Mobile\0"))
+		if (ImGui::Combo("##layout", &settings_.uiLayout, "Automatic (mobile on Android and iOS)\0Desktop\0Mobile\0"))
 			changed = true;
 		HelpMarker("The button in the middle at the bottom switches between the two as well.");
 		ImGui::Unindent();

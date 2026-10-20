@@ -30,7 +30,8 @@ struct PlatformHooks {
 	std::function<void(const std::string &url)> openUrl;
 	// Called when the DPI scale or theme must be re-applied.
 	float dpiScale = 1.0f;
-	bool touch = false;  // phones and tablets: bigger targets, simpler layout
+	bool touch = false;  // phones, tablets and UWP: bigger targets
+	bool mobilePlatform = false;  // Android and iOS: the mobile layout is the default
 	// Physical density on phones and tablets (1 = 160 dpi, Android's dp), 0 when unknown. SDL's
 	// content scale is always 1 there, so the mobile layout sizes its text from this instead.
 	float density = 0;
