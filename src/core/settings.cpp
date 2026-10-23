@@ -172,6 +172,10 @@ std::string ChdSettings::Describe() const {
 	return Fmt("%s hunk %s", CodecsString().c_str(), (h % 1024 ? Fmt("%u", h) : Fmt("%uK", h / 1024)).c_str());
 }
 
+std::string PsxSettings::Describe() const {
+	return Fmt("deflate %d%s", level, basePbp.empty() ? "" : ", with a base PBP");
+}
+
 std::vector<uint32_t> CdCodecsFor(const ChdSettings &c) {
 	std::vector<uint32_t> out;
 	for (uint32_t codec : c.codecs) {
@@ -406,6 +410,14 @@ bool Settings::Load(const std::string &path) {
 		chd.SetCodecs(s);
 
 	boolean("cue.split", cue.splitBins);
+	{
+		uint32_t l = (uint32_t)psx.level;
+		u32("psx.level", l);
+		psx.level = l > 9 ? 9 : (int)l;
+	}
+	str("psx.base", psx.basePbp);
+	str("psx.boot", psx.bootPng);
+	boolean("psx.group_discs", psx.groupDiscs);
 
 	{
 		uint32_t c = (uint32_t)pbp.compress;
@@ -506,6 +518,7 @@ bool Settings::Save(const std::string &path) const {
 	}
 	t += Fmt("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
 	t += Fmt("cue.split=%d\n", cue.splitBins);
+	t += Fmt("psx.level=%d\npsx.base=%s\npsx.boot=%s\npsx.group_discs=%d\n", psx.level, psx.basePbp.c_str(), psx.bootPng.c_str(), psx.groupDiscs);
 	t += Fmt("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
 		pbp.contentId.c_str(), pbp.startDatPng.c_str(), pbp.trimOnExtract, pbp.verifyMacs, pbp.layout == PbpLayout::File ? "file" : "folder");
 	for (Format f : { Format::RVZ, Format::WIA }) {

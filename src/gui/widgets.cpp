@@ -121,6 +121,7 @@ ImVec4 FormatColor(Format f) {
 	case Format::ZAR: return ImVec4(0.95f, 0.55f, 0.80f, 1);
 	case Format::CUE: return ImVec4(0.85f, 0.70f, 0.45f, 1);
 	case Format::CDIMG: return ImVec4(0.80f, 0.55f, 0.95f, 1);
+	case Format::PSX: return ImVec4(0.95f, 0.62f, 0.40f, 1);
 	default: return ImVec4(1, 1, 1, 1);
 	}
 }

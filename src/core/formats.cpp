@@ -28,6 +28,7 @@ const char *FormatName(Format f) {
 	case Format::ZAR: return "ZAR";
 	case Format::CUE: return "CUE/BIN";
 	case Format::CDIMG: return "CD image";
+	case Format::PSX: return "PBP (PSOne)";
 	default: return "?";
 	}
 }
@@ -46,6 +47,7 @@ const char *FormatKey(Format f) {
 	case Format::ZAR: return "zar";
 	case Format::CUE: return "cue";
 	case Format::CDIMG: return "cd";
+	case Format::PSX: return "psx";
 	default: return "unknown";
 	}
 }
@@ -63,6 +65,7 @@ const char *FormatExtension(Format f) {
 	case Format::RVZ: return ".rvz";
 	case Format::ZAR: return ".zar";
 	case Format::CUE: return ".cue";
+	case Format::PSX: return ".pbp";
 	default: return "";
 	}
 }
@@ -81,6 +84,7 @@ const char *FormatDescription(Format f) {
 	case Format::ZAR: return "ZArchive: several discs, folders and DLC in one file, zstd blocks (Cemu, PPSSPP)";
 	case Format::CUE: return "CD image: cue sheet and .bin tracks (from CD CHDs)";
 	case Format::CDIMG: return "CD image: CloneCD, Alcohol 120%, GDI, Nero or raw .bin";
+	case Format::PSX: return "PSOne EBOOT.PBP: PlayStation discs, deflate blocks (POPS, Adrenaline, PS1 emulators)";
 	default: return "";
 	}
 }
@@ -99,6 +103,7 @@ Format FormatFromName(const std::string &in) {
 	if (s == "wia") return Format::WIA;
 	if (s == "rvz") return Format::RVZ;
 	if (s == "zar" || s == "zarchive") return Format::ZAR;
+	if (s == "psx" || s == "ps1" || s == "psone" || s == "pbp1") return Format::PSX;
 	if (s == "cue" || s == "bin" || s == "cuebin" || s == "cue/bin") return Format::CUE;
 	return Format::Unknown;
 }
@@ -112,7 +117,7 @@ bool IsIrvzFormat(Format f) {
 }
 
 bool IsCdImageFormat(Format f) {
-	return f == Format::CUE || f == Format::CDIMG;
+	return f == Format::CUE || f == Format::CDIMG || f == Format::PSX;
 }
 
 bool HasRawCdSync(const std::string &path) {
@@ -152,8 +157,10 @@ const char *PlatformLabel(Platform p) {
 }
 
 std::string TargetRejects(Format target, Platform p) {
-	if (p == Platform::CD && target != Format::CHD && target != Format::CUE)
-		return std::string("CD images convert to CHD or CUE/BIN, not ") + FormatName(target);
+	if (p == Platform::CD && target != Format::CHD && target != Format::CUE && target != Format::PSX)
+		return std::string("CD images convert to CHD, CUE/BIN or PBP (PSOne), not ") + FormatName(target);
+	if (target == Format::PSX && p != Platform::Unknown && p != Platform::CD)
+		return std::string("PSOne EBOOTs hold PlayStation discs") + (p == Platform::PSP ? " (this is a PSP game: use PBP)" : "");
 	if (target == Format::CUE && p != Platform::Unknown && p != Platform::CD)
 		return std::string("CUE/BIN only holds CD images") + (p == Platform::OtherIso ? "" : Fmt(" (this is a %s disc)", PlatformLabel(p)));
 	if (IsIrvzFormat(target) && p != Platform::Unknown && p != Platform::GameCube && p != Platform::Wii)
@@ -174,7 +181,7 @@ bool FormatAvailable(Format f) {
 const std::vector<Format> &OutputFormats() {
 	static const std::vector<Format> list = [] {
 		std::vector<Format> v;
-		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::RVZ, Format::WIA, Format::CUE, Format::ISO, Format::CSO2, Format::DAX })
+		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::PSX, Format::RVZ, Format::WIA, Format::CUE, Format::ISO, Format::CSO2, Format::DAX })
 			if (FormatAvailable(f))
 				v.push_back(f);
 		return v;
@@ -251,7 +258,7 @@ Format DetectFormat(const std::string &path) {
 	if (n >= 8 && memcmp(h, "MComprHD", 8) == 0)
 		return Format::CHD;
 	if (n >= 8 && memcmp(h, "\0PBP", 4) == 0)
-		return Format::PBP;
+		return ipbp_pbp_kind(path.c_str()) == IPBP_PBP_PSX ? Format::PSX : Format::PBP;
 	if (n >= 4 && memcmp(h, "WIA\x01", 4) == 0)
 		return Format::WIA;
 	if (n >= 4 && memcmp(h, "RVZ\x01", 4) == 0)
@@ -397,6 +404,35 @@ ImageInfo InspectImage(const std::string &path) {
 	case Format::CDIMG:
 		InspectCd(path, info);
 		break;
+	case Format::PSX: {
+		ipbp_job *job = ipbp_job_create();
+		ipbp_psx_info pi;
+		if (ipbp_read_psx_info(job, path.c_str(), &pi) == IPBP_OK) {
+			info.platform = Platform::CD;
+			info.discId = pi.disc[0].disc_id[0] ? pi.disc[0].disc_id : pi.disc_id;
+			info.title = pi.title;
+			info.blockSize = 16 * 2352;
+			uint32_t tracks = 0, audio = 0;
+			uint64_t stored = 0;
+			for (uint32_t d = 0; d < pi.discs; ++d) {
+				info.isoSize += (uint64_t)pi.disc[d].frames * 2352;
+				stored += pi.disc[d].stored_bytes;
+				tracks += pi.disc[d].tracks;
+				for (uint32_t t = 0; t < pi.disc[d].tracks; ++t)
+					audio += pi.disc[d].track[t].audio ? 1 : 0;
+			}
+			info.cdTracks = pi.disc[0].tracks;
+			info.detail = Fmt("%u disc%s, %u track%s", pi.discs, pi.discs == 1 ? "" : "s", tracks, tracks == 1 ? "" : "s");
+			if (audio)
+				info.detail += Fmt(" (%u audio)", audio);
+			info.detail += stored < info.isoSize ? ", deflate" : ", stored";
+			info.detail += pi.has_data_psp ? ", with DATA.PSP" : ", no DATA.PSP (emulators)";
+		} else {
+			info.error = ipbp_job_error(job);
+		}
+		ipbp_job_destroy(job);
+		break;
+	}
 	default:
 		info.error = "not a recognised disc image";
 		break;

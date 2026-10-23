@@ -65,6 +65,15 @@ struct CueSettings {
 // flac -> cdfl; huff has no CD codec). Empty: chdman's createcd default (cdlz, cdzl, cdfl).
 std::vector<uint32_t> CdCodecsFor(const ChdSettings &c);
 
+// PSOne EBOOT.PBP (iPBP). The layout (Game.pbp or Game/EBOOT.PBP) is the PBP one.
+struct PsxSettings {
+	int level = 9;              // deflate 0 (stored) .. 9
+	std::string basePbp;        // a PSOne Classic EBOOT.PBP for DATA.PSP / STARTDAT (real PSPs); empty: emulators only
+	std::string bootPng;        // boot screen (with a base PBP)
+	bool groupDiscs = true;     // "Game (Disc 1)" .. "(Disc 5)" into one EBOOT
+	std::string Describe() const;
+};
+
 // ---- PBP (iPBP) -------------------------------------------------------------------------------
 
 enum class PbpLayout { File /* Game.pbp */, Folder /* Game/EBOOT.PBP */ };
@@ -151,6 +160,7 @@ struct Settings {
 	RvzSettings rvz, wia;
 	ZarSettings zar;
 	CueSettings cue;
+	PsxSettings psx;
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders

@@ -56,6 +56,7 @@ The command is usually the format you want to make.
 | `rvz` | RVZ (`.rvz`) | GameCube and Wii discs only (Dolphin) |
 | `wia` | WIA (`.wia`) | GameCube and Wii discs only (wit, Dolphin) |
 | `cue` | cue sheet + `.bin` tracks | CD images and CD CHDs only |
+| `psx` | PSOne EBOOT.PBP | PlayStation discs (CD images, CD CHDs); `pbp` on CD images makes it too |
 | `iso` | plain ISO | extracts any image; a `.zar` is unpacked into a folder, a CD image to cue/bin. Alias: `extract` |
 | `zar` | ZArchive (`.zar`) | several discs, DLC folders and anything else in one file |
 | `verify` | – | decodes images and reports problems; checks a `.zar`'s SHA-256 |
@@ -221,6 +222,28 @@ deletes every file of the image. In `zar --discs FMT`, CD images go in as CD CHD
 isopackager-cli chd D:\PS1                       # every cue/bin, ccd, mds in it -> CD CHDs
 isopackager-cli cue --single-bin "Game.chd"      # Game.cue + Game.bin
 isopackager-cli verify --against Game.cue Game.chd
+```
+
+### PSOne EBOOTs: psx
+
+`psx` packs PlayStation discs (any of the CD images above, or CD CHDs) into PSOne EBOOT.PBPs,
+popstation's layout, read by PS1 emulators, Adrenaline and, with a base PBP, PSP firmware:
+
+| Option | Meaning | Default |
+|---|---|---|
+| `--level N` | deflate level, 0 (stored) to 9 | 9 |
+| `--single-disc` | one EBOOT per disc file, instead of `Game (Disc 1)` ... `(Disc 5)` together | together |
+| `--base-pbp FILE` | a PSOne Classic EBOOT.PBP: its DATA.PSP and STARTDAT, which a real PSP needs | none |
+| `--boot-png FILE` | the boot screen in STARTDAT (with `--base-pbp`) | the base's |
+| `--pbp-file` | `Game.pbp` instead of `Game/EBOOT.PBP` | folder |
+
+The disc ID comes from SYSTEM.CNF, the title from the file name. `pbp` on CD images makes PSOne
+EBOOTs too, and `cue` or `chd` on a PSOne EBOOT gives its discs back
+(`Game (Disc 1).cue` ... for several).
+
+```sh
+isopackager-cli psx D:\PS1                          # every game, its discs together
+isopackager-cli chd "Game.pbp"                     # back to CD CHDs, one per disc
 ```
 
 ## How images are converted

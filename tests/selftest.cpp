@@ -915,6 +915,107 @@ int main(int argc, char **argv) {
 			fs::remove(cd / "notes.bin", ec);
 		}
 
+		// PSOne EBOOTs: a PlayStation disc (MODE2 sectors, ISO9660, SYSTEM.CNF) with an audio track.
+		{
+			auto psxDisc = [&](const std::string &boot, uint32_t dataSectors) {
+				std::vector<uint8_t> raw((size_t)dataSectors * 2352, 0);
+				std::vector<uint8_t> sec(2048 * dataSectors, 0);
+				auto both = [](uint8_t *q, uint32_t v) {
+					for (int i = 0; i < 4; ++i) {
+						q[i] = (uint8_t)(v >> (8 * i));
+						q[7 - i] = (uint8_t)(v >> (8 * i));
+					}
+				};
+				auto rec = [&](uint8_t *q, const std::string &name, uint32_t lba, uint32_t size, bool dir) {
+					size_t nl = name.size(), len = 33 + nl + ((33 + nl) & 1);
+					q[0] = (uint8_t)len;
+					both(q + 2, lba);
+					both(q + 10, size);
+					q[25] = dir ? 2 : 0;
+					q[28] = 1;
+					q[32] = (uint8_t)nl;
+					memcpy(q + 33, name.data(), nl);
+					return len;
+				};
+				uint8_t *pvd = &sec[16 * 2048];
+				pvd[0] = 1;
+				memcpy(pvd + 1, "CD001", 5);
+				pvd[6] = 1;
+				both(pvd + 80, dataSectors);
+				rec(pvd + 156, std::string(1, '\0'), 18, 2048, true);
+				sec[17 * 2048] = 255;
+				memcpy(&sec[17 * 2048 + 1], "CD001", 5);
+				const std::string cnf = "BOOT = " + boot + "\r\n";
+				uint8_t *r = &sec[18 * 2048];
+				r += rec(r, std::string(1, '\0'), 18, 2048, true);
+				r += rec(r, std::string(1, '\1'), 18, 2048, true);
+				rec(r, "SYSTEM.CNF;1", 19, (uint32_t)cnf.size(), false);
+				memcpy(&sec[19 * 2048], cnf.data(), cnf.size());
+				std::vector<uint8_t> fill = noise(2048 * (dataSectors - 24));
+				memcpy(&sec[24 * 2048], fill.data(), fill.size());
+				for (uint32_t i = 0; i < dataSectors; ++i) {
+					uint8_t *q = &raw[(size_t)i * 2352];
+					memset(q + 1, 0xff, 10);
+					q[15] = 2;
+					q[18] = q[22] = 8;
+					memcpy(q + 24, &sec[(size_t)i * 2048], 2048);
+				}
+				return raw;
+			};
+			fs::path psx = root / "psx";
+			fs::create_directories(psx, ec);
+			std::vector<uint8_t> d1 = psxDisc("cdrom:\\SLUS_012.34;1", 64), audio = noise(150 * 2352 + 80 * 2352);
+			std::vector<uint8_t> d1bin = d1;
+			d1bin.insert(d1bin.end(), audio.begin(), audio.end());
+			put(psx / "PS Game (Disc 1).bin", d1bin);
+			putText(psx / "PS Game (Disc 1).cue", "FILE \"PS Game (Disc 1).bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n"
+				"  TRACK 02 AUDIO\n    INDEX 00 00:00:64\n    INDEX 01 00:02:64\n");
+			std::vector<uint8_t> d2 = psxDisc("cdrom:\\SLUS_012.35;1", 40);
+			put(psx / "PS Game (Disc 2).bin", d2);
+			putText(psx / "PS Game (Disc 2).cue", "FILE \"PS Game (Disc 2).bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n");
+
+			// A PBP job on CD images makes a PSOne EBOOT, both discs in it; disc 2's own job is skipped.
+			Settings ps = s;
+			ps.pbp.layout = PbpLayout::File;
+			r = Convert(PathU8(psx / "PS Game (Disc 1).cue"), Format::PBP, ps, PathU8(root / "psx_out"));
+			CHECK(r.state == JobState::Done && r.verify == "OK", "cue -> PSOne EBOOT: %s", r.message.c_str());
+			const std::string eboot = PathU8(root / "psx_out" / "PS Game.pbp");
+			CHECK(r.outputPath == eboot, "EBOOT named %s", r.outputPath.c_str());
+			CHECK(DetectFormat(eboot) == Format::PSX, "the EBOOT is detected as %s", FormatName(DetectFormat(eboot)));
+			ImageInfo pi = InspectImage(eboot);
+			CHECK(pi.error.empty() && pi.platform == Platform::CD && pi.discId == "SLUS01234" && pi.title == "PS Game" &&
+				pi.isoSize == d1bin.size() + d2.size(), "EBOOT info: %s %s %s", pi.discId.c_str(), pi.detail.c_str(), pi.error.c_str());
+			JobResult skipped = Convert(PathU8(psx / "PS Game (Disc 2).cue"), Format::PSX, ps, PathU8(root / "psx_out"));
+			CHECK(skipped.state == JobState::Skipped, "disc 2 should go with disc 1: %s", JobStateName(skipped.state));
+
+			// Back: cue/bin and CHDs, one per disc.
+			Settings one2 = ps;
+			one2.cue.splitBins = false;
+			r = Convert(eboot, Format::CUE, one2, PathU8(root / "psx_cue"));
+			CHECK(r.state == JobState::Done && r.verify == "OK", "EBOOT -> cue: %s", r.message.c_str());
+			CHECK(SameBytes(PathU8(root / "psx_cue" / "PS Game (Disc 1).bin"), d1bin, &why), "disc 1 back: %s", why.c_str());
+			CHECK(SameBytes(PathU8(root / "psx_cue" / "PS Game (Disc 2).bin"), d2, &why), "disc 2 back: %s", why.c_str());
+			CHECK(readText(root / "psx_cue" / "PS Game (Disc 1).cue") ==
+					"FILE \"PS Game (Disc 1).bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n"
+					"  TRACK 02 AUDIO\n    INDEX 00 00:00:64\n    INDEX 01 00:02:64\n",
+				"disc 1 cue sheet: %s", readText(root / "psx_cue" / "PS Game (Disc 1).cue").c_str());
+			r = Convert(eboot, Format::CHD, ps, PathU8(root / "psx_chd"));
+			CHECK(r.state == JobState::Done && r.verify == "OK", "EBOOT -> CHD: %s", r.message.c_str());
+			CHECK(chdm_verify_cd(PathU8(psx / "PS Game (Disc 1).cue").c_str(), PathU8(root / "psx_chd" / "PS Game (Disc 1).chd").c_str(),
+					  nullptr, nullptr) == CHDM_OK, "disc 1 CHD: %s", chdm_last_error_message());
+			// And a CD CHD to an EBOOT again (one disc, stored), into Game/EBOOT.PBP.
+			Settings stored = s;
+			stored.psx.level = 0;
+			stored.psx.groupDiscs = false;  // disc 1 is next to it
+			r = Convert(PathU8(root / "psx_chd" / "PS Game (Disc 2).chd"), Format::PSX, stored, PathU8(root / "psx_out2"));
+			CHECK(r.state == JobState::Done && r.verify == "OK" && r.outputPath == PathU8(root / "psx_out2" / "PS Game (Disc 2)" / "EBOOT.PBP"),
+				"CHD -> EBOOT: %s %s", r.outputPath.c_str(), r.message.c_str());
+			CHECK(Convert(isoPath, Format::PSX, s, PathU8(root / "psx_x")).state == JobState::Skipped, "a PSP ISO can't be a PSOne EBOOT");
+			for (const char *d : { "psx_out", "psx_cue", "psx_chd", "psx_out2" })
+				for (auto &it : fs::directory_iterator(root / d, ec))
+					CHECK(PathU8(it.path().filename()).find("isopk-temp") == std::string::npos, "temporary left: %s", PathU8(it.path()).c_str());
+		}
+
 		// Deleting the source takes every file of the image.
 		Settings del = s;
 		del.out.deleteSource = true;

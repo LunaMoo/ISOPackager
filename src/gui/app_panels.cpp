@@ -434,6 +434,50 @@ void App::DrawSettings() {
 		ImGui::Unindent();
 	}
 
+	// --- PSOne EBOOTs
+	if (ImGui::CollapsingHeader(MobileLayout() ? "PBP (PSOne)" : "PBP (PSOne, iPBP)")) {
+		ImGui::Indent();
+		PsxSettings &c = settings_.psx;
+		row("Compression");
+		ItemWidthEm(10);
+		changed |= ImGui::SliderInt("##psxlevel", &c.level, 0, 9, c.level == 0 ? "stored" : "deflate %d");
+		HelpMarker("16-sector blocks, each deflated. 9 is the smallest; every level reads as fast.");
+		changed |= CheckboxWrap("Put a game's discs into one EBOOT", &c.groupDiscs);
+		Tip("\"Game (Disc 1)\" ... \"(Disc 5)\" next to each other become one Game EBOOT with up to 5 discs.");
+		row("Base PBP (real PSP)");
+		ItemWidthEm(22);
+		changed |= InputStringHint("##psxbase", "(none: emulators only)", &c.basePbp);
+		SameLineDesktop();
+		auto browse = [this](std::string *target, const char *title) {
+			browserThen_ = [this, target](const std::vector<std::string> &r) {
+				if (!r.empty()) {
+					*target = r[0];
+					SettingsChanged();
+				}
+			};
+			std::vector<std::string> files;
+			if (hooks_.pickFiles && hooks_.pickFiles(&files)) {
+				browserThen_(files);
+				browserThen_ = nullptr;
+			} else {
+				browser_.Open(FileBrowser::PickFiles, title);
+			}
+		};
+		if (ImGui::Button("Browse...##psxbase"))
+			browse(&c.basePbp, "Base PBP");
+		HelpMarker("A PSOne Classic EBOOT.PBP. Its DATA.PSP and STARTDAT are what a real PSP needs to start the game;\n"
+				   "PS1 emulators, Adrenaline with its own loader and PPSSPP don't need them.");
+		ImGui::BeginDisabled(c.basePbp.empty());
+		row("Boot screen PNG");
+		ItemWidthEm(22);
+		changed |= InputStringHint("##psxboot", "(the base PBP's) 480x272", &c.bootPng);
+		SameLineDesktop();
+		if (ImGui::Button("Browse...##psxboot"))
+			browse(&c.bootPng, "Boot screen PNG");
+		ImGui::EndDisabled();
+		ImGui::TextDisabled("PlayStation discs from any CD image or CD CHD; a PBP job on them makes these.");
+		ImGui::Unindent();
+	}
 
 	changed |= DrawRvzSection(Format::RVZ, MobileLayout() ? "RVZ (iRVZ)" : "RVZ (iRVZ, GameCube and Wii)", true);
 	changed |= DrawRvzSection(Format::WIA, MobileLayout() ? "WIA (iRVZ)" : "WIA (iRVZ, GameCube and Wii)", false);

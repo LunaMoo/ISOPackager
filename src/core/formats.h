@@ -22,6 +22,7 @@ enum class Format {
 	       // jobs, so it isn't in OutputFormats().
 	CUE,   // CD image: cue sheet + .bin track files (read and written, via CHDmodern)
 	CDIMG, // CD image read only: CloneCD .ccd/.img, Alcohol .mds/.mdf, .gdi, .nrg, bare raw .bin/.img
+	PSX,   // PSOne EBOOT.PBP (PSISOIMG / PSTITLEIMG, up to 5 discs), via iPBP
 	Count
 };
 
@@ -32,7 +33,7 @@ const char *FormatDescription(Format f); // one line for the UI
 Format FormatFromName(const std::string &s);  // "cso", "cso2", "zso", "dax", "chd", "pbp", "iso"
 bool IsMcsoFormat(Format f);
 bool IsIrvzFormat(Format f);  // WIA, RVZ
-bool IsCdImageFormat(Format f);  // CUE, CDIMG
+bool IsCdImageFormat(Format f);  // CUE, CDIMG, PSX (PSOne EBOOTs)
 // Whether the file starts with a raw CD sector's sync pattern (a raw .bin/.img/.iso data track).
 bool HasRawCdSync(const std::string &utf8Path);
 // .cue, .ccd, .mds, .gdi, .nrg, .toc: the file that describes a CD image's tracks.

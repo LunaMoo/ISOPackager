@@ -67,6 +67,8 @@ void Usage() {
 		"               are converted through RAM. Folders are searched for images.\n"
 		"  iso          Extract to ISO (a .zar is extracted to a folder next to it, a CD image to\n"
 		"               cue/bin). Alias: extract\n"
+		"  psx          PlayStation discs (any CD image or CD CHD) to PSOne EBOOT.PBPs, a game's\n"
+		"               \"(Disc N)\" files into one EBOOT; also pbp on CD images\n"
 		"  cue          CD images (cue/bin, CloneCD, Alcohol, GDI, Nero, raw .bin) and CD CHDs to\n"
 		"               cue/bin; the chd command makes CD CHDs of them\n"
 		"  zar          Pack a folder (its contents become the archive) and/or files into one .zar\n"
@@ -85,7 +87,9 @@ void Usage() {
 		"                 rvz: chunk 32K..2M (power of two) or a multiple of 2M   wia: a multiple of 2M\n"
 		"  --zopfli-splits N, --precheck PCT, --force-all     cso family (see docs/cli.md)\n"
 		"  --content-id ID, --boot-png FILE, --pbp-file       pbp\n"
-		"  --single-bin   cue: one Game.bin instead of one .bin per track (Redump style)\n\n"
+		"  --single-bin   cue: one Game.bin instead of one .bin per track (Redump style)\n"
+		"  --level N      psx: deflate 0 (stored) to 9 (default)   --single-disc  an EBOOT per disc file\n"
+		"  --base-pbp F   psx: a PSOne Classic EBOOT for DATA.PSP / STARTDAT (real PSPs; --boot-png too)\n\n"
 		"Output and engine:\n"
 		"  -o, --output DIR    Output folder (default: next to each source)\n"
 		"  --flat              Don't recreate the scanned folders under --output\n"
@@ -308,6 +312,25 @@ bool ApplyFormatOpts(Settings &s, Format f, const FormatOpts &o, const std::stri
 		return true;
 	}
 
+	if (f == Format::PSX) {
+		if (o.block)
+			return notFor("--block");
+		if (o.method && ToLower(*o.method) != "default" && ToLower(*o.method) != "deflate")
+			return notFor("--method", "PSOne EBOOTs are deflate; --level 0-9");
+		if (o.method && !o.level)
+			s.psx.level = PsxSettings().level;
+		if (o.level) {
+			char *end = nullptr;
+			long l = strtol(o.level->c_str(), &end, 10);
+			if (!end || *end || l < 0 || l > 9) {
+				*err = "--level for PSOne EBOOTs is 0 (stored) to 9 (default)";
+				return false;
+			}
+			s.psx.level = (int)l;
+		}
+		return true;
+	}
+
 	if (f == Format::PBP) {
 		if (o.level)
 			return notFor("--level", "PBP: --method lzrc, max or none");
@@ -488,6 +511,11 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		} else if (o == "--boot-png") {
 			if (!val(a.s.pbp.startDatPng))
 				return false;
+		} else if (o == "--base-pbp") {
+			if (!val(a.s.psx.basePbp))
+				return false;
+		} else if (o == "--single-disc") {
+			a.s.psx.groupDiscs = false;
 		} else if (o == "--single-bin") {
 			a.s.cue.splitBins = false;
 		} else if (o == "--split-bins") {
@@ -684,6 +712,8 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		a.s.target = a.target;
 		if (!ApplyFormatOpts(a.s, a.target, a.fmt, "", &err))
 			return false;
+		if (a.target == Format::PSX && a.s.psx.bootPng.empty())
+			a.s.psx.bootPng = a.s.pbp.startDatPng;  // --boot-png
 	} else if (a.command == "zar") {
 		if (a.fmt.Any() && !a.s.zar.compressDiscs) {
 			err = "in zar, --method / --level / --block tune the discs' format: give it with --discs FMT";
@@ -724,6 +754,7 @@ std::string SettingsFor(Format f, const Settings &s) {
 	case Format::PBP: return s.pbp.Describe() + (s.pbp.layout == PbpLayout::Folder ? ", Game/EBOOT.PBP" : ", Game.pbp");
 	case Format::ZAR: return s.zar.Describe();
 	case Format::CUE: return s.cue.splitBins ? "one .bin per track" : "one .bin";
+	case Format::PSX: return s.psx.Describe() + (s.pbp.layout == PbpLayout::Folder ? ", Game/EBOOT.PBP" : ", Game.pbp");
 	default: return "";
 	}
 }

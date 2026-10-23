@@ -8,13 +8,13 @@ Dear ImGui interface and a command line tool that share the same engine.
 | ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP, WIA, RVZ | any of them (RVZ/WIA: GameCube and Wii discs; PBP: PSP games) |
 | a folder, or any files and folders   | one ZArchive (`.zar`): several discs, DLC folders and the rest together |
 | a ZArchive (`.zar`, `.wua`)          | a folder next to it, named after it      |
-| CD images: .cue/.bin, CloneCD .ccd/.img, Alcohol .mds/.mdf, .gdi, .nrg, raw .bin/.iso; CD CHDs | CD CHD, cue/bin |
+| CD images: .cue/.bin, CloneCD .ccd/.img, Alcohol .mds/.mdf, .gdi, .nrg, raw .bin/.iso; CD CHDs; PSOne EBOOT.PBPs | CD CHD, cue/bin, PSOne EBOOT.PBP (PlayStation discs) |
 
 Built on these libraries, linked statically from the submodules in `external/`:
 
 - [mCSO / maxcso](https://github.com/LunaMoo/maxcso) — CSO v1, CSO v2, ZSO and DAX
 - [CHDmodern](https://github.com/LunaMoo/CHDmodern) — MAME's CHD code (DVD CHDs like `chdman createdvd`, CD CHDs like `createcd` / `extractcd`)
-- [iPBP](https://github.com/LunaMoo/iPBP) — PSN-style EBOOT.PBP (NPUMDIMG), LZRC and LZRC max
+- [iPBP](https://github.com/LunaMoo/iPBP) — PSN-style EBOOT.PBP (NPUMDIMG), LZRC and LZRC max; PSOne EBOOTs (PSISOIMG / PSTITLEIMG)
 - [iRVZ](https://github.com/LunaMoo/iRVZ) — WIA and RVZ (GameCube / Wii), from Dolphin's WIABlob
 - [ZArchive](https://github.com/LunaMoo/ZArchive) — zstd-compressed, random-access file archives
 
@@ -35,6 +35,12 @@ Built on these libraries, linked statically from the submodules in `external/`:
   same name, and a folder scan queues each image once, by its descriptor. CD images in a batch
   for another format become CD CHDs (cue/bin when extracting); deleting the source deletes all
   of its files.
+- **PSOne EBOOT.PBPs** from PlayStation discs, from any CD image or CD CHD. They are in popstation's
+  layout: deflated blocks at level 9 by default, the TOC with audio tracks and pregaps, and the disc
+  ID from SYSTEM.CNF. Files named `Game (Disc 1)` to `(Disc 5)` go into one EBOOT. A PBP job on CD
+  images makes these, and they convert back to cue/bin or CD CHDs, one per disc. PS1 emulators
+  and Adrenaline read them as they are. A real PSP also needs the DATA.PSP and STARTDAT of a
+  PSOne Classic EBOOT, which you pick as the base PBP. None is included.
 - **Extract** any of them back to ISO (PBPs trimmed to their ISO9660 size by default).
 - **Repack** between compressed formats (CHD → CSO, PBP → CHD, CSO → CSO with stronger settings, …)
   **through RAM**: the source is decompressed into memory through the libraries' writer callbacks

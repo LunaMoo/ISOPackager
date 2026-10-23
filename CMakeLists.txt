@@ -175,6 +175,7 @@ set_target_properties(zarchive PROPERTIES MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUN
 set(IPBP_SHARED OFF CACHE BOOL "" FORCE)
 set(IPBP_BUILD_CLI OFF CACHE BOOL "" FORCE)
 set(IPBP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(IPBP_ZLIB_TARGET ${ISOPK_ZLIB} CACHE STRING "" FORCE)  # PSOne EBOOTs: the zlib everything else uses
 add_subdirectory(${EXT}/iPBP ${CMAKE_BINARY_DIR}/ext/iPBP EXCLUDE_FROM_ALL)
 
 # ---------------------------------------------------------------------------
