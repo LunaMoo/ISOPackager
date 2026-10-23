@@ -379,6 +379,11 @@ std::vector<BenchRow> RunBenchmark(const std::vector<InputFile> &inputs, const B
 			step += cfg.cases.size();
 			continue;
 		}
+		if (IsCdSource(in.path, S)) {
+			log(Fmt("=== %s: skipped, CD images aren't benchmarked ===", PathU8(U8Path(in.path).filename()).c_str()));
+			step += cfg.cases.size();
+			continue;
+		}
 		Settings base;
 		base.engine.threads = cfg.threads;
 		base.pbp.verifyMacs = true;

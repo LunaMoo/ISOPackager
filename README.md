@@ -8,11 +8,12 @@ Dear ImGui interface and a command line tool that share the same engine.
 | ISO, CSO (v1/v2), ZSO, DAX, CHD, EBOOT.PBP, WIA, RVZ | any of them (RVZ/WIA: GameCube and Wii discs; PBP: PSP games) |
 | a folder, or any files and folders   | one ZArchive (`.zar`): several discs, DLC folders and the rest together |
 | a ZArchive (`.zar`, `.wua`)          | a folder next to it, named after it      |
+| CD images: .cue/.bin, CloneCD .ccd/.img, Alcohol .mds/.mdf, .gdi, .nrg, raw .bin/.iso; CD CHDs | CD CHD, cue/bin |
 
 Built on these libraries, linked statically from the submodules in `external/`:
 
 - [mCSO / maxcso](https://github.com/LunaMoo/maxcso) — CSO v1, CSO v2, ZSO and DAX
-- [CHDmodern](https://github.com/LunaMoo/CHDmodern) — MAME's CHD code (DVD CHDs, like `chdman createdvd`)
+- [CHDmodern](https://github.com/LunaMoo/CHDmodern) — MAME's CHD code (DVD CHDs like `chdman createdvd`, CD CHDs like `createcd` / `extractcd`)
 - [iPBP](https://github.com/LunaMoo/iPBP) — PSN-style EBOOT.PBP (NPUMDIMG), LZRC and LZRC max
 - [iRVZ](https://github.com/LunaMoo/iRVZ) — WIA and RVZ (GameCube / Wii), from Dolphin's WIABlob
 - [ZArchive](https://github.com/LunaMoo/ZArchive) — zstd-compressed, random-access file archives
@@ -25,6 +26,15 @@ Built on these libraries, linked statically from the submodules in `external/`:
   block size, Zopfli splits and the libdeflate pre-check; CHD codecs (lzma, zlib, zstd, huff, flac)
   and hunk size; PBP compression level, content ID and boot screen; RVZ/WIA method (LZMA2 by
   default, or zstd, LZMA, bzip2, none, purge), level and chunk size.
+- **CD images** to CD CHDs (like `chdman createcd`: 8 frames per hunk, cdlz/cdzl/cdfl by default,
+  or the CHD codecs you pick as their CD variants), and CD CHDs back to cue/bin — one .bin per
+  track as Redump names them, or a single .bin. Cue sheets can have any number of files, AUDIO
+  tracks, INDEX 00/01 and PREGAP; a FILE line naming a missing file falls back to the cue sheet's
+  own name. Alcohol images may carry subchannel data (skipped) and gaps between tracks (kept as
+  pregaps). A bare .bin/.img is read through the cue sheet that names it or the .ccd/.mds of the
+  same name, and a folder scan queues each image once, by its descriptor. CD images in a batch
+  for another format become CD CHDs (cue/bin when extracting); deleting the source deletes all
+  of its files.
 - **Extract** any of them back to ISO (PBPs trimmed to their ISO9660 size by default).
 - **Repack** between compressed formats (CHD → CSO, PBP → CHD, CSO → CSO with stronger settings, …)
   **through RAM**: the source is decompressed into memory through the libraries' writer callbacks

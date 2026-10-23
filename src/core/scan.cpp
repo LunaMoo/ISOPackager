@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <set>
 
+#include <chdmodern/chdmodern.h>
+
 #include "core/util.h"
 
 namespace isopk {
@@ -91,6 +93,48 @@ std::vector<InputFile> ScanInputs(const std::vector<std::string> &paths, bool re
 			warn(in + ": not found");
 		}
 	}
+
+	// A CD image's track files (Game (Track 2).bin, Game.img, Game.mdf) belong to its descriptor:
+	// the .cue / .ccd / .mds is the one job.
+	std::set<std::string> parts;
+	for (InputFile &f : out) {
+		std::string ext = ToLower(PathU8(U8Path(f.path).extension()));
+		if (!IsCdImageFormat(f.format) || ext == ".bin" || ext == ".img" || ext == ".raw" || ext == ".mdf" || ext == ".iso")
+			continue;
+		auto collect = [](void *u, const char *p) {
+			std::error_code ec;
+			std::string key = PathU8(fs::absolute(U8Path(p), ec).lexically_normal());
+#ifdef _WIN32
+			key = ToLower(key);
+#endif
+			((std::set<std::string> *)u)->insert(key);
+		};
+		std::set<std::string> mine;
+		if (chdm_cd_image_files(f.path.c_str(), collect, &mine) == CHDM_OK) {
+			std::error_code ec;
+			f.size = 0;  // the whole image, not just its descriptor
+			for (const std::string &m : mine)
+				f.size += fs::file_size(U8Path(m), ec);
+			std::string self = f.path;
+#ifdef _WIN32
+			self = ToLower(self);
+#endif
+			mine.erase(self);
+			parts.insert(mine.begin(), mine.end());
+		}
+	}
+	out.erase(std::remove_if(out.begin(), out.end(), [&](const InputFile &f) {
+		std::string key = f.path;
+#ifdef _WIN32
+		key = ToLower(key);
+#endif
+		if (parts.count(key))
+			return true;
+		// In a folder scan, a .bin / .img that no cue sheet names and that has no raw sectors is
+		// some other file (picked on its own it's tried, and read through a cue that names it).
+		return !f.baseDir.empty() && f.format == Format::CDIMG && !IsCdDescriptor(f.path) && !HasRawCdSync(f.path) &&
+			ToLower(PathU8(U8Path(f.path).extension())) != ".mdf";
+	}), out.end());
 	return out;
 }
 

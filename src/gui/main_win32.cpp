@@ -120,7 +120,7 @@ bool ShowOpenDialog(bool folder, std::vector<std::string> *out) {
 		opts |= FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST;
 	dlg->SetOptions(opts);
 	if (!folder) {
-		const COMDLG_FILTERSPEC filters[] = { { L"Disc images", L"*.iso;*.gcm;*.cso;*.zso;*.dax;*.chd;*.pbp;*.wia;*.rvz" }, { L"All files", L"*.*" } };
+		const COMDLG_FILTERSPEC filters[] = { { L"Disc images", L"*.iso;*.gcm;*.cso;*.zso;*.dax;*.chd;*.pbp;*.wia;*.rvz;*.cue;*.ccd;*.mds;*.gdi;*.nrg;*.bin;*.img" }, { L"All files", L"*.*" } };
 		dlg->SetFileTypes(2, filters);
 		dlg->SetTitle(L"Add disc images");
 	} else {

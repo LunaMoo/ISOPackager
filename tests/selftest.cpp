@@ -11,6 +11,8 @@
 #include <thread>
 #include <vector>
 
+#include <chdmodern/chdmodern.h>
+
 #include "core/bench.h"
 #include "core/engine.h"
 #include "core/fileio.h"
@@ -791,6 +793,135 @@ int main(int argc, char **argv) {
 		printf("  ok\n");
 	}
 #endif
+
+	// CD images: a Redump-style cue with three track files, a CloneCD image, CHD and back.
+	{
+		uint32_t seed = 99;
+		auto noise = [&](size_t n) {
+			std::vector<uint8_t> v(n);
+			for (auto &b : v)
+				b = (uint8_t)((seed = seed * 1103515245u + 12345u) >> 16);
+			return v;
+		};
+		auto put = [&](const fs::path &p, const std::vector<uint8_t> &d) {
+			File f;
+			CHECK(f.Open(PathU8(p), File::Write) && f.WriteAt(0, d.data(), d.size()), "can't write %s", PathU8(p).c_str());
+		};
+		auto putText = [&](const fs::path &p, const std::string &t) { put(p, std::vector<uint8_t>(t.begin(), t.end())); };
+		auto readText = [&](const fs::path &p) {
+			std::vector<uint8_t> v;
+			File f;
+			if (f.Open(PathU8(p), File::Read)) {
+				v.resize((size_t)f.Size());
+				f.ReadExact(0, v.data(), v.size());
+			}
+			return std::string(v.begin(), v.end());
+		};
+		std::vector<uint8_t> t1 = noise(30 * 2352), t2 = noise(40 * 2352), t3 = noise(23 * 2352);
+		for (int i = 0; i < 30; ++i) {  // raw MODE1 sectors
+			uint8_t *s = &t1[i * 2352];
+			memset(s, 0xff, 12);
+			s[0] = s[11] = 0;
+			s[15] = 1;
+		}
+		const std::string cue =
+			"FILE \"CD Game (Track 1).bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n"
+			"FILE \"CD Game (Track 2).bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 00 00:00:00\n    INDEX 01 00:00:10\n"
+			"FILE \"CD Game (Track 3).bin\" BINARY\n  TRACK 03 AUDIO\n    PREGAP 00:00:05\n    INDEX 01 00:00:00\n";
+		fs::path cd = root / "cd";
+		fs::create_directories(cd, ec);
+		put(cd / "CD Game (Track 1).bin", t1);
+		put(cd / "CD Game (Track 2).bin", t2);
+		put(cd / "CD Game (Track 3).bin", t3);
+		putText(cd / "CD Game.cue", cue);
+
+		std::vector<std::string> w;
+		auto found = ScanInputs({ PathU8(cd) }, false, &w);
+		CHECK(found.size() == 1 && found[0].format == Format::CUE, "a cue and its tracks should scan as one image (%zu)", found.size());
+		ImageInfo ci = InspectImage(PathU8(cd / "CD Game.cue"));
+		CHECK(ci.error.empty() && ci.platform == Platform::CD && ci.cdTracks == 3 && ci.isoSize == 93 * 2352, "cue info: %s %s",
+			ci.detail.c_str(), ci.error.c_str());
+
+		Settings s;
+		s.engine.verify = true;
+		JobResult r = Convert(PathU8(cd / "CD Game.cue"), Format::CHD, s, PathU8(root / "cd_chd"));
+		CHECK(r.state == JobState::Done && r.verify == "OK", "cue -> CHD: %s", r.message.c_str());
+		const std::string chd = PathU8(root / "cd_chd" / "CD Game.chd");
+		ImageInfo hi = InspectImage(chd);
+		CHECK(hi.error.empty() && hi.platform == Platform::CD && hi.cdTracks == 3, "CD CHD info: %s %s", hi.detail.c_str(), hi.error.c_str());
+		r = Convert(chd, Format::CSO, s, PathU8(root / "cd_x"));  // CD images in a CSO batch become CD CHDs
+		CHECK(r.state == JobState::Done && U8Path(r.outputPath).extension() == ".chd", "CD CHD in a CSO batch: %s", r.message.c_str());
+		CHECK(Convert(isoPath, Format::CUE, s, PathU8(root / "cd_x")).state == JobState::Skipped, "a PSP ISO can't become cue/bin");
+
+		r = Convert(chd, Format::CUE, s, PathU8(root / "cd_cue"));
+		CHECK(r.state == JobState::Done && r.verify == "OK", "CHD -> cue: %s", r.message.c_str());
+		std::string why;
+		CHECK(readText(root / "cd_cue" / "CD Game.cue") == cue, "split cue sheet differs");
+		CHECK(SameBytes(PathU8(root / "cd_cue" / "CD Game (Track 1).bin"), t1, &why), "track 1: %s", why.c_str());
+		CHECK(SameBytes(PathU8(root / "cd_cue" / "CD Game (Track 2).bin"), t2, &why), "track 2: %s", why.c_str());
+		CHECK(SameBytes(PathU8(root / "cd_cue" / "CD Game (Track 3).bin"), t3, &why), "track 3: %s", why.c_str());
+		CHECK(r.outputSize == 93 * 2352 + cue.size(), "cue/bin output size %llu", (unsigned long long)r.outputSize);
+
+		std::vector<uint8_t> joined = t1;
+		joined.insert(joined.end(), t2.begin(), t2.end());
+		joined.insert(joined.end(), t3.begin(), t3.end());
+		Settings one = s;
+		one.cue.splitBins = false;
+		r = Convert(chd, Format::CUE, one, PathU8(root / "cd_one"));
+		CHECK(r.state == JobState::Done, "CHD -> single bin: %s", r.message.c_str());
+		CHECK(SameBytes(PathU8(root / "cd_one" / "CD Game.bin"), joined, &why), "single bin: %s", why.c_str());
+
+		// CloneCD straight to cue/bin (through a temporary CHD) and to CHD.
+		fs::path ccd = root / "ccd";
+		fs::create_directories(ccd, ec);
+		std::vector<uint8_t> img = joined;
+		put(ccd / "Clone.img", img);
+		putText(ccd / "Clone.ccd", "[CloneCD]\nVersion=3\n[Disc]\nSessions=1\n[TRACK 1]\nMODE=1\nINDEX 1=0\n"
+			"[TRACK 2]\nMODE=0\nINDEX 0=30\nINDEX 1=40\n[TRACK 3]\nMODE=0\nINDEX 1=70\n");
+		r = Convert(PathU8(ccd / "Clone.ccd"), Format::CUE, one, PathU8(root / "ccd_cue"));
+		CHECK(r.state == JobState::Done && r.verify == "OK", "ccd -> cue: %s", r.message.c_str());
+		CHECK(SameBytes(PathU8(root / "ccd_cue" / "Clone.bin"), img, &why), "ccd -> bin: %s", why.c_str());
+		CHECK(!fs::exists(root / "ccd_cue" / "Clone.cue.isopk-temp.chd"), "temporary CHD left behind");
+		r = Convert(PathU8(ccd / "Clone.img"), Format::CHD, s, PathU8(root / "ccd_chd"));
+		CHECK(r.state == JobState::Done && r.verify == "OK", "img (through its ccd) -> CHD: %s", r.message.c_str());
+
+		// Into a ZArchive with the discs as CHDs: the cue/bin set becomes one CD CHD, even when the
+		// discs are going to CSO, and a data .bin next to it stays as it is.
+		{
+			put(cd / "notes.bin", std::vector<uint8_t>(2352 * 3, 'n'));
+			for (Format discs : { Format::CHD, Format::PBP }) {
+				ZarSpec spec;
+				spec.name = "CD Archive";
+				spec.rootDir = PathU8(cd);
+				Settings zs = s;
+				zs.zar = ZarSettings();
+				zs.zar.level = 1;
+				zs.zar.compressDiscs = true;
+				zs.zar.discFormat = discs;
+				r = MakeZar(spec, zs, PathU8(root / "cd_zar"));
+				CHECK(r.state == JobState::Done && r.verify == "OK", "cue in a ZAR (%s): %s", FormatName(discs), r.message.c_str());
+				bool found = false;
+				std::vector<uint8_t> inner = ZarFile(r.outputPath, "CD Game.chd", &found);
+				CHECK(found && !inner.empty(), "no CD Game.chd in the archive");
+				ZarFile(r.outputPath, "CD Game (Track 2).bin", &found);
+				CHECK(!found, "a track file went into the archive next to its CHD");
+				std::vector<uint8_t> notes = ZarFile(r.outputPath, "notes.bin", &found);
+				CHECK(found && notes.size() == 2352 * 3, "notes.bin should be stored as it is");
+				const std::string out = PathU8(root / "cd_zar" / "inner.chd");
+				put(out, inner);
+				CHECK(chdm_verify_cd(PathU8(cd / "CD Game.cue").c_str(), out.c_str(), nullptr, nullptr) == CHDM_OK, "the CHD in the archive: %s",
+					chdm_last_error_message());
+			}
+			fs::remove(cd / "notes.bin", ec);
+		}
+
+		// Deleting the source takes every file of the image.
+		Settings del = s;
+		del.out.deleteSource = true;
+		r = Convert(PathU8(cd / "CD Game.cue"), Format::CHD, del, PathU8(root / "cd_chd2"));
+		CHECK(r.state == JobState::Done, "cue -> CHD, delete source: %s", r.message.c_str());
+		CHECK(fs::is_empty(cd, ec), "the cue's track files should be deleted with it");
+	}
 
 	// A tiny benchmark.
 	{

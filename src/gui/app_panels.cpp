@@ -424,6 +424,17 @@ void App::DrawSettings() {
 		ImGui::Unindent();
 	}
 
+	// --- CD images
+	if (ImGui::CollapsingHeader("CUE/BIN (CD images, CHDmodern)")) {
+		ImGui::Indent();
+		changed |= ImGui::Checkbox("One .bin per track (Redump style)", &settings_.cue.splitBins);
+		HelpMarker("On: Game (Track 1).bin, Game (Track 2).bin, ... as Redump names them.\nOff: a single Game.bin.");
+		ImGui::TextDisabled("CD images (.cue/.bin, CloneCD .ccd/.img, Alcohol .mds/.mdf, .gdi, .nrg, raw .bin/.iso)\n"
+			"convert to CD CHDs, and CD CHDs back to cue/bin. Subchannel data isn't kept.");
+		ImGui::Unindent();
+	}
+
+
 	changed |= DrawRvzSection(Format::RVZ, MobileLayout() ? "RVZ (iRVZ)" : "RVZ (iRVZ, GameCube and Wii)", true);
 	changed |= DrawRvzSection(Format::WIA, MobileLayout() ? "WIA (iRVZ)" : "WIA (iRVZ, GameCube and Wii)", false);
 	DrawZarSection(true, &changed);

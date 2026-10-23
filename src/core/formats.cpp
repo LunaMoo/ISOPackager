@@ -26,6 +26,8 @@ const char *FormatName(Format f) {
 	case Format::WIA: return "WIA";
 	case Format::RVZ: return "RVZ";
 	case Format::ZAR: return "ZAR";
+	case Format::CUE: return "CUE/BIN";
+	case Format::CDIMG: return "CD image";
 	default: return "?";
 	}
 }
@@ -42,6 +44,8 @@ const char *FormatKey(Format f) {
 	case Format::WIA: return "wia";
 	case Format::RVZ: return "rvz";
 	case Format::ZAR: return "zar";
+	case Format::CUE: return "cue";
+	case Format::CDIMG: return "cd";
 	default: return "unknown";
 	}
 }
@@ -58,6 +62,7 @@ const char *FormatExtension(Format f) {
 	case Format::WIA: return ".wia";
 	case Format::RVZ: return ".rvz";
 	case Format::ZAR: return ".zar";
+	case Format::CUE: return ".cue";
 	default: return "";
 	}
 }
@@ -69,11 +74,13 @@ const char *FormatDescription(Format f) {
 	case Format::CSO2: return "CISO v2, deflate or lz4 per block (experimental)";
 	case Format::ZSO: return "ZISO, lz4 blocks: fastest to read (PPSSPP, PSP CFW)";
 	case Format::DAX: return "DAX, zlib 8K frames (old PSP CFW)";
-	case Format::CHD: return "MAME CHD (DVD), LZMA/zlib/zstd/FLAC hunks (PPSSPP)";
+	case Format::CHD: return "MAME CHD: DVD (LZMA/zlib/zstd/FLAC hunks) or CD (from CD images)";
 	case Format::PBP: return "PSN EBOOT.PBP, LZRC blocks (PSP, PPSSPP)";
 	case Format::WIA: return "WIA, GameCube/Wii discs: bzip2/LZMA/LZMA2 chunks (wit, Dolphin)";
 	case Format::RVZ: return "RVZ, GameCube/Wii discs: zstd/LZMA2/bzip2 chunks, junk removed (Dolphin)";
 	case Format::ZAR: return "ZArchive: several discs, folders and DLC in one file, zstd blocks (Cemu, PPSSPP)";
+	case Format::CUE: return "CD image: cue sheet and .bin tracks (from CD CHDs)";
+	case Format::CDIMG: return "CD image: CloneCD, Alcohol 120%, GDI, Nero or raw .bin";
 	default: return "";
 	}
 }
@@ -92,6 +99,7 @@ Format FormatFromName(const std::string &in) {
 	if (s == "wia") return Format::WIA;
 	if (s == "rvz") return Format::RVZ;
 	if (s == "zar" || s == "zarchive") return Format::ZAR;
+	if (s == "cue" || s == "bin" || s == "cuebin" || s == "cue/bin") return Format::CUE;
 	return Format::Unknown;
 }
 
@@ -103,17 +111,51 @@ bool IsIrvzFormat(Format f) {
 	return f == Format::WIA || f == Format::RVZ;
 }
 
+bool IsCdImageFormat(Format f) {
+	return f == Format::CUE || f == Format::CDIMG;
+}
+
+bool HasRawCdSync(const std::string &path) {
+	static const uint8_t sync[12] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+	uint8_t h[16];
+	return ReadHead(path, h, 16) == 16 && memcmp(h, sync, 12) == 0;
+}
+
+bool IsCdDescriptor(const std::string &path) {
+	std::string ext = ToLower(PathU8(U8Path(path).extension()));
+	return ext == ".cue" || ext == ".ccd" || ext == ".mds" || ext == ".gdi" || ext == ".nrg" || ext == ".toc";
+}
+
+bool IsCdSource(const std::string &path, Format f) {
+	if (IsCdImageFormat(f))
+		return true;
+	if (f != Format::CHD)
+		return false;
+	chdm_file *file = nullptr;
+	if (chdm_open(path.c_str(), CHDM_OPEN_READ, nullptr, &file) != CHDM_OK)
+		return false;
+	chdm_info ci{};
+	chdm_get_info(file, &ci);
+	chdm_close(file);
+	return ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM;
+}
+
 const char *PlatformLabel(Platform p) {
 	switch (p) {
 	case Platform::PSP: return "PSP";
 	case Platform::GameCube: return "GameCube";
 	case Platform::Wii: return "Wii";
 	case Platform::OtherIso: return "ISO";
+	case Platform::CD: return "CD";
 	default: return "";
 	}
 }
 
 std::string TargetRejects(Format target, Platform p) {
+	if (p == Platform::CD && target != Format::CHD && target != Format::CUE)
+		return std::string("CD images convert to CHD or CUE/BIN, not ") + FormatName(target);
+	if (target == Format::CUE && p != Platform::Unknown && p != Platform::CD)
+		return std::string("CUE/BIN only holds CD images") + (p == Platform::OtherIso ? "" : Fmt(" (this is a %s disc)", PlatformLabel(p)));
 	if (IsIrvzFormat(target) && p != Platform::Unknown && p != Platform::GameCube && p != Platform::Wii)
 		return std::string(FormatName(target)) + " only holds GameCube and Wii discs" + (p == Platform::PSP ? " (this is a PSP game)" : "");
 	if (target == Format::PBP && p != Platform::Unknown && p != Platform::PSP)
@@ -132,7 +174,7 @@ bool FormatAvailable(Format f) {
 const std::vector<Format> &OutputFormats() {
 	static const std::vector<Format> list = [] {
 		std::vector<Format> v;
-		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::RVZ, Format::WIA, Format::ISO, Format::CSO2, Format::DAX })
+		for (Format f : { Format::CSO, Format::ZSO, Format::CHD, Format::PBP, Format::RVZ, Format::WIA, Format::CUE, Format::ISO, Format::CSO2, Format::DAX })
 			if (FormatAvailable(f))
 				v.push_back(f);
 		return v;
@@ -143,7 +185,42 @@ const std::vector<Format> &OutputFormats() {
 bool IsImageExtension(const std::string &ext) {
 	// .zar / .wua (Wii U archives are ZArchives too) are queued to be extracted.
 	return ext == ".zar" || ext == ".wua" || ext == ".iso" || ext == ".cso" || ext == ".zso" || ext == ".dax" || ext == ".chd" || ext == ".pbp" || ext == ".wia" ||
-		ext == ".rvz" || ext == ".gcm";
+		ext == ".rvz" || ext == ".gcm" || ext == ".cue" || ext == ".ccd" || ext == ".mds" || ext == ".mdf" || ext == ".gdi" ||
+		ext == ".nrg" || ext == ".bin" || ext == ".img";
+}
+
+static uint64_t FileSize(const std::string &path) {
+	std::error_code ec;
+	uint64_t n = fs::file_size(U8Path(path), ec);
+	return ec ? 0 : n;
+}
+
+// Tracks, sizes and the first data track of a CD image or CD CHD.
+static bool InspectCd(const std::string &path, ImageInfo &info) {
+	chdm_cd_image_info cd{};
+	if (chdm_cd_inspect(path.c_str(), &cd) != CHDM_OK) {
+		info.error = chdm_last_error_message();
+		return false;
+	}
+	info.platform = Platform::CD;
+	info.cdTracks = cd.tracks;
+	info.isoSize = cd.data_bytes;
+	std::string what = Fmt("%u track%s", cd.tracks, cd.tracks == 1 ? "" : "s");
+	if (cd.audio_tracks)
+		what += Fmt(" (%u audio)", cd.audio_tracks);
+	if (cd.first_data[0])
+		what += Fmt(", %s", cd.first_data);
+	if (cd.gdrom)
+		what += ", GD-ROM";
+	if (cd.sessions > 1)
+		what += Fmt(", %u sessions", cd.sessions);
+	if (IsCdImageFormat(info.format)) {
+		info.blockSize = 2352;
+		info.detail = Fmt("%s, %s, %u file%s", what.c_str(), cd.format, cd.files, cd.files == 1 ? "" : "s");
+	} else {
+		info.detail += ", " + what;
+	}
+	return true;
 }
 
 // A ZArchive ends with its footer: version, then magic, both big endian. Checked before the
@@ -179,13 +256,25 @@ Format DetectFormat(const std::string &path) {
 		return Format::WIA;
 	if (n >= 4 && memcmp(h, "RVZ\x01", 4) == 0)
 		return Format::RVZ;
+	std::string ext = ToLower(PathU8(U8Path(path).extension()));
+	// CD images: descriptors by name, track files by their raw sectors.
+	if (ext == ".cue")
+		return Format::CUE;
+	if (ext == ".ccd" || ext == ".mds" || ext == ".mdf" || ext == ".gdi" || ext == ".nrg" || ext == ".toc")
+		return Format::CDIMG;
+	static const uint8_t sync[12] = { 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00 };
+	const bool rawSync = n >= 16 && memcmp(h, sync, 12) == 0;
+	if (rawSync && (ext == ".iso" || ext == ".bin" || ext == ".img" || ext == ".raw"))
+		return Format::CDIMG;
 	if (n >= 0x8006 && memcmp(h + 0x8001, "CD001", 5) == 0)
 		return Format::ISO;
+	// Audio track files have no sync: whole 2352-byte sectors (read through the cue sheet naming them).
+	if ((ext == ".bin" || ext == ".img" || ext == ".raw") && n > 0 && FileSize(path) % 2352 == 0)
+		return Format::CDIMG;
 	// GameCube / Wii images have no ISO9660 volume: their magic words are in the disc header.
 	if (n >= 0x20 && (memcmp(h + 0x18, "\x5D\x1C\x9E\xA3", 4) == 0 || memcmp(h + 0x1C, "\xC2\x33\x9F\x3D", 4) == 0))
 		return Format::ISO;
 	// A headerless or damaged image: trust the extension.
-	std::string ext = ToLower(PathU8(U8Path(path).extension()));
 	if (ext == ".iso" || ext == ".gcm")
 		return Format::ISO;
 	return Format::Unknown;
@@ -256,11 +345,12 @@ ImageInfo InspectImage(const std::string &path) {
 					codecs += "+";
 				codecs += name;
 			}
-			info.detail = Fmt("v%u, %s, hunk %u%s", ci.version, codecs.empty() ? "uncompressed" : codecs.c_str(), ci.hunk_bytes,
-				ci.kind == CHDM_KIND_DVD ? "" : ci.kind == CHDM_KIND_CDROM ? ", CD-ROM (not a UMD image)" : "");
-			if (ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM || ci.kind == CHDM_KIND_AV)
-				info.error = "not a DVD/UMD CHD";
+			info.detail = Fmt("v%u, %s, hunk %u", ci.version, codecs.empty() ? "uncompressed" : codecs.c_str(), ci.hunk_bytes);
 			chdm_close(f);
+			if (ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM)
+				InspectCd(path, info);
+			else if (ci.kind == CHDM_KIND_AV)
+				info.error = "a LaserDisc / A/V CHD, not a disc image";
 		} else {
 			info.error = chdm_last_error_message();
 		}
@@ -303,6 +393,10 @@ ImageInfo InspectImage(const std::string &path) {
 		}
 		break;
 	}
+	case Format::CUE:
+	case Format::CDIMG:
+		InspectCd(path, info);
+		break;
 	default:
 		info.error = "not a recognised disc image";
 		break;
@@ -310,7 +404,7 @@ ImageInfo InspectImage(const std::string &path) {
 	if (info.format == Format::PBP && info.error.empty())
 		info.platform = Platform::PSP;
 
-	if (info.error.empty() && (info.discId.empty() || info.platform == Platform::Unknown)) {
+	if (info.error.empty() && info.platform != Platform::CD && (info.discId.empty() || info.platform == Platform::Unknown)) {
 		std::string err;
 		auto reader = OpenImageReader(path, info.format, &err);
 		if (reader) {

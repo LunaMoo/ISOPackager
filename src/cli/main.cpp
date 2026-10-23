@@ -25,6 +25,8 @@
 #include <unistd.h>
 #endif
 
+#include <chdmodern/chdmodern.h>
+
 #include "core/bench.h"
 #include "core/engine.h"
 #include "core/queue.h"
@@ -63,7 +65,10 @@ void Usage() {
 		"  cso  zso  cso2  dax  chd  pbp  rvz  wia\n"
 		"               Make that format from any image: ISOs are compressed, compressed images\n"
 		"               are converted through RAM. Folders are searched for images.\n"
-		"  iso          Extract to ISO (a .zar is extracted to a folder next to it). Alias: extract\n"
+		"  iso          Extract to ISO (a .zar is extracted to a folder next to it, a CD image to\n"
+		"               cue/bin). Alias: extract\n"
+		"  cue          CD images (cue/bin, CloneCD, Alcohol, GDI, Nero, raw .bin) and CD CHDs to\n"
+		"               cue/bin; the chd command makes CD CHDs of them\n"
 		"  zar          Pack a folder (its contents become the archive) and/or files into one .zar\n"
 		"  convert      Same as the format commands, with --to FMT (default cso)\n"
 		"  verify       Decode every image and report problems (.zar: check its SHA-256)\n"
@@ -79,7 +84,8 @@ void Usage() {
 		"  --block SIZE   cso/zso/cso2: block 2K..256K (power of two) or auto   chd: hunk (x2048)\n"
 		"                 rvz: chunk 32K..2M (power of two) or a multiple of 2M   wia: a multiple of 2M\n"
 		"  --zopfli-splits N, --precheck PCT, --force-all     cso family (see docs/cli.md)\n"
-		"  --content-id ID, --boot-png FILE, --pbp-file       pbp\n\n"
+		"  --content-id ID, --boot-png FILE, --pbp-file       pbp\n"
+		"  --single-bin   cue: one Game.bin instead of one .bin per track (Redump style)\n\n"
 		"Output and engine:\n"
 		"  -o, --output DIR    Output folder (default: next to each source)\n"
 		"  --flat              Don't recreate the scanned folders under --output\n"
@@ -100,6 +106,7 @@ void Usage() {
 		"zar:  --name NAME  --zar-level N (1-22, default 22)  --zar-precheck PCT (default 95)\n"
 		"      --store-discs  --discs FMT (put every disc in FMT first, through RAM)  --no-root\n"
 		"verify:  --against ISO     compare each image with this ISO byte for byte\n"
+		"         (a CD image with a CD CHD, or a CD CHD with its cue/bin)\n"
 		"bench:   --case \"FMT [format options]\" (repeatable; default: the GUI's benchmark list)\n"
 		"         --reads N  --source-on-disk  --work DIR\n\n"
 		"Examples:\n"
@@ -169,7 +176,7 @@ bool ParseDouble(const std::string &v, double *out) {
 }
 
 bool IsCompressedFormat(Format f) {
-	return f != Format::Unknown && f != Format::ISO && f != Format::ZAR && f != Format::Count;
+	return f != Format::Unknown && f != Format::ISO && f != Format::ZAR && !IsCdImageFormat(f) && f != Format::Count;
 }
 
 // Applies the format options to f's settings in s. Options that don't fit f are errors, so a typo
@@ -481,6 +488,10 @@ bool ParseArgs(int argc, char **argv, Args &a, std::string &err) {
 		} else if (o == "--boot-png") {
 			if (!val(a.s.pbp.startDatPng))
 				return false;
+		} else if (o == "--single-bin") {
+			a.s.cue.splitBins = false;
+		} else if (o == "--split-bins") {
+			a.s.cue.splitBins = true;
 		} else if (o == "--pbp-file") {
 			a.s.pbp.layout = PbpLayout::File;
 		} else if (o == "--pbp-folder") {
@@ -712,6 +723,7 @@ std::string SettingsFor(Format f, const Settings &s) {
 	case Format::CHD: return s.chd.Describe();
 	case Format::PBP: return s.pbp.Describe() + (s.pbp.layout == PbpLayout::Folder ? ", Game/EBOOT.PBP" : ", Game.pbp");
 	case Format::ZAR: return s.zar.Describe();
+	case Format::CUE: return s.cue.splitBins ? "one .bin per track" : "one .bin";
 	default: return "";
 	}
 }
@@ -772,14 +784,14 @@ int RunConvert(Args &a) {
 	}
 	const Format t = a.command == "extract" ? Format::ISO : a.target;
 	if (!g_quiet) {
-		std::string what = t == Format::ISO ? std::string("ISO (archives to folders)") : Fmt("%s, %s", FormatName(t), SettingsFor(t, a.s).c_str());
+		std::string what = t == Format::ISO ? std::string("ISO (archives to folders, CD images to cue/bin)") : Fmt("%s, %s", FormatName(t), SettingsFor(t, a.s).c_str());
 		PrintLine(Fmt("%zu image(s) -> %s; %u at once, verify %s, RAM budget %s", files.size(), what.c_str(), a.s.engine.jobs,
 			a.s.engine.verify ? "on" : "off", HumanBytes(a.s.engine.ramBudget ? a.s.engine.ramBudget : DefaultRamBudget()).c_str()));
 	}
 	JobQueue q;
 	q.SetSettings(a.s);
 	for (const InputFile &f : files)
-		q.Add(f, t);
+		q.Add(f, t == Format::ISO && IsCdSource(f.path, f.format) ? Format::CUE : t);  // CD images extract to cue/bin
 	return RunQueue(q, files.size());
 }
 
@@ -863,6 +875,40 @@ int RunVerify(Args &a) {
 		bool ok;
 		if (f.format == Format::ZAR) {
 			ok = TestZArchive(f.path, ctx, &verdict);
+		} else if (IsCdSource(f.path, f.format)) {
+			auto chdProgress = [](void *u, double p) -> int {
+				OpContext *c = (OpContext *)u;
+				if (c->progress)
+					c->progress(p);
+				return c->Cancelled() ? 1 : 0;
+			};
+			if (!a.against.empty()) {
+				// A CD image against a CD CHD, either way round.
+				const bool chd = f.format == Format::CHD;
+				int rc = chdm_verify_cd(chd ? a.against.c_str() : f.path.c_str(), chd ? f.path.c_str() : a.against.c_str(), chdProgress, &ctx);
+				ok = rc == CHDM_OK;
+				verdict = ok ? "matches " + a.against : std::string(chdm_last_error_message());
+			} else if (f.format == Format::CHD) {
+				// Every hunk decodes and passes its CRC.
+				chdm_file *file = nullptr;
+				ok = chdm_open(f.path.c_str(), CHDM_OPEN_READ, nullptr, &file) == CHDM_OK;
+				if (ok) {
+					chdm_info ci{};
+					chdm_get_info(file, &ci);
+					std::vector<uint8_t> hunk(ci.hunk_bytes);
+					for (uint32_t h = 0; ok && h < ci.hunk_count && !g_interrupted; ++h) {
+						ok = chdm_read_hunk(file, h, hunk.data()) == CHDM_OK;
+						if (h % 64 == 0)
+							ctx.progress((double)h / ci.hunk_count);
+					}
+					chdm_close(file);
+				}
+				verdict = ok ? "decodes cleanly" : std::string(chdm_last_error_message());
+			} else {
+				chdm_cd_image_info ci{};
+				ok = chdm_cd_inspect(f.path.c_str(), &ci) == CHDM_OK;
+				verdict = ok ? Fmt("readable, %u tracks (--against GAME.chd compares it)", ci.tracks) : std::string(chdm_last_error_message());
+			}
 		} else if (!a.against.empty()) {
 			CompareWriter cmp(&ref);
 			ok = DecompressToWriter(f.path, f.format, a.s, cmp, false, ctx);
@@ -1044,6 +1090,8 @@ int RunFormats(const Args &a) {
 	printf("  %-8s %-6s %-46s %s\n", "command", "ext", "settings without options", "");
 	for (int i = 1; i < (int)Format::Count; ++i) {
 		Format f = (Format)i;
+		if (f == Format::CDIMG)  // read only
+			continue;
 		std::string key = FormatKey(f);
 		std::string settings = f == Format::ISO ? "extract (a .zar to a folder)" : SettingsFor(f, a.s);
 		printf("  %-8s %-6s %-46s %s%s\n", key.c_str(), FormatExtension(f), settings.c_str(), FormatDescription(f),

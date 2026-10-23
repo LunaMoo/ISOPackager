@@ -57,6 +57,14 @@ struct ChdSettings {
 // Codecs that make sense for DVD/UMD data.
 const std::vector<std::string> &ChdCodecChoices();
 
+// CD images (cue/bin out of CD CHDs).
+struct CueSettings {
+	bool splitBins = true;  // one .bin per track, "Game (Track 1).bin" (Redump); off: one Game.bin
+};
+// The CD codecs a CD CHD gets for these CHD settings (lzma -> cdlz, zlib -> cdzl, zstd -> cdzs,
+// flac -> cdfl; huff has no CD codec). Empty: chdman's createcd default (cdlz, cdzl, cdfl).
+std::vector<uint32_t> CdCodecsFor(const ChdSettings &c);
+
 // ---- PBP (iPBP) -------------------------------------------------------------------------------
 
 enum class PbpLayout { File /* Game.pbp */, Folder /* Game/EBOOT.PBP */ };
@@ -142,6 +150,7 @@ struct Settings {
 	PbpSettings pbp;
 	RvzSettings rvz, wia;
 	ZarSettings zar;
+	CueSettings cue;
 	OutputSettings out;
 	EngineSettings engine;
 	bool recursive = true;      // when adding folders

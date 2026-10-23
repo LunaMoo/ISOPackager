@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <set>
 #include <thread>
@@ -748,6 +749,186 @@ struct Plan {
 	}
 };
 
+// CD images and CD CHDs: CD image -> CD CHD, CD CHD -> CD CHD (other codecs), and either -> cue/bin.
+// They don't go through a plain 2048-byte image, so this is CHDmodern's file-to-file path.
+void RunCdJob(Job &job, Format S, Format T, const ImageInfo &info, const std::string &final, const std::string &part,
+	bool replacingSource, const std::vector<fs::path> &createdDirs, JobResult &res,
+	const std::function<void(JobState, const std::string &)> &finish) {
+	const Settings &s = job.settings;
+	const InputFile &in = job.input;
+	std::error_code ec;
+	res.isoSize = info.isoSize;
+	const bool toCue = T == Format::CUE;
+	const bool viaTempChd = toCue && S != Format::CHD;
+
+	Plan plan;
+	if (viaTempChd)
+		plan.phases.push_back({ Phase::Compressing, 0.3 });
+	plan.phases.push_back({ toCue ? Phase::Extracting : Phase::Compressing, 1.0 });
+	if (s.engine.verify)
+		plan.phases.push_back({ Phase::Verifying, viaTempChd ? 0.6 : 0.3 });
+	OpContext ctx;
+	ctx.cancel = &job.cancel;
+	Phase cur = Phase::Idle;
+	ctx.progress = [&](double f) {
+		job.phaseProgress = f;
+		job.overall = plan.Overall(cur, f);
+	};
+	auto enter = [&](Phase p) {
+		cur = p;
+		job.phase = (int)p;
+		job.phaseProgress = 0.0;
+		job.overall = plan.Overall(p, 0.0);
+	};
+
+	// The files the source is made of (for "delete source"), listed before anything changes.
+	std::vector<std::string> sources;
+	chdm_cd_image_files(in.path.c_str(), [](void *u, const char *p) { ((std::vector<std::string> *)u)->push_back(p); }, &sources);
+	if (sources.empty())
+		sources.push_back(in.path);
+
+	std::string tempChd;
+	fs::path tempDir;
+	auto cleanup = [&] {
+		RemoveFile(part);
+		if (!tempChd.empty())
+			RemoveFile(tempChd);
+		if (!tempDir.empty())
+			fs::remove_all(tempDir, ec);
+		for (const fs::path &d : createdDirs)
+			if (fs::is_empty(d, ec))
+				fs::remove(d, ec);
+	};
+	auto fail = [&](const std::string &what) {
+		cleanup();
+		if (ctx.cancelled || job.cancel.load())
+			return finish(JobState::Cancelled, "cancelled");
+		return finish(JobState::Failed, what + ": " + ctx.error);
+	};
+
+	Log(LogLevel::Info, Fmt("Start: %s (%s, %s) -> %s", in.path.c_str(), FormatName(S), info.detail.c_str(), FormatName(T)));
+
+	uint32_t list[4] = {};
+	const uint32_t *codecs = nullptr;
+	std::vector<uint32_t> cd = CdCodecsFor(s.chd);
+	if (!cd.empty()) {
+		for (size_t i = 0; i < 4 && i < cd.size(); ++i)
+			list[i] = cd[i];
+		codecs = list;
+	}
+
+	std::vector<std::string> outputs;
+	if (!toCue) {
+		Clock::time_point tc = Clock::now();
+		enter(Phase::Compressing);
+		if (!ChdResult(chdm_create_cd(in.path.c_str(), part.c_str(), 0, codecs, ChdProgress, &ctx), ctx))
+			return fail("compressing");
+		res.compressSecs = SecondsSince(tc);
+		if (s.engine.verify) {
+			Clock::time_point tv = Clock::now();
+			enter(Phase::Verifying);
+			if (!ChdResult(chdm_verify_cd(in.path.c_str(), part.c_str(), ChdProgress, &ctx), ctx)) {
+				res.verify = ctx.error;
+				return fail("verify failed");
+			}
+			res.verifySecs = SecondsSince(tv);
+		}
+		enter(Phase::Finishing);
+		if (replacingSource || fs::exists(U8Path(final), ec))
+			RemoveFile(final);
+		fs::rename(U8Path(part), U8Path(final), ec);
+		if (ec) {
+			RemoveFile(part);
+			return finish(JobState::Failed, "can't rename the output: " + ec.message());
+		}
+		outputs.push_back(final);
+	} else {
+		const fs::path dest = U8Path(final).parent_path();
+		std::string chd = in.path;
+		if (viaTempChd) {
+			// Other CD images go through an uncompressed CHD: CHDmodern writes cue/bin from CHDs.
+			Clock::time_point tc = Clock::now();
+			tempChd = final + ".isopk-temp.chd";
+			RemoveFile(tempChd);
+			enter(Phase::Compressing);
+			static const uint32_t none[4] = {};
+			if (!ChdResult(chdm_create_cd(in.path.c_str(), tempChd.c_str(), 0, none, ChdProgress, &ctx), ctx))
+				return fail("reading the CD image");
+			res.compressSecs = SecondsSince(tc);
+			chd = tempChd;
+		}
+		// Written into a folder of its own, then moved next to the other images.
+		tempDir = dest / U8Path("." + PathU8(U8Path(final).stem()) + ".isopk-temp");
+		fs::remove_all(tempDir, ec);
+		fs::create_directories(tempDir, ec);
+		if (ec) {
+			ctx.error = ec.message();
+			return fail("can't create " + PathU8(tempDir));
+		}
+		const std::string cue = PathU8(tempDir / U8Path(final).filename());
+		Clock::time_point tx = Clock::now();
+		enter(Phase::Extracting);
+		if (!ChdResult(chdm_extract_cd(chd.c_str(), cue.c_str(), s.cue.splitBins ? 1 : 0, ChdProgress, &ctx), ctx))
+			return fail("extracting");
+		res.extractSecs = SecondsSince(tx);
+		if (s.engine.verify) {
+			Clock::time_point tv = Clock::now();
+			enter(Phase::Verifying);
+			bool ok = ChdResult(chdm_verify_cd(cue.c_str(), chd.c_str(), ChdProgress, &ctx), ctx);
+			if (ok && viaTempChd)
+				ok = ChdResult(chdm_verify_cd(in.path.c_str(), chd.c_str(), ChdProgress, &ctx), ctx);
+			if (!ok) {
+				res.verify = ctx.error;
+				return fail("verify failed");
+			}
+			res.verifySecs = SecondsSince(tv);
+		}
+		if (!tempChd.empty()) {
+			RemoveFile(tempChd);
+			tempChd.clear();
+		}
+		enter(Phase::Finishing);
+		std::vector<fs::path> made;
+		for (auto it = fs::directory_iterator(tempDir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+			made.push_back(it->path());
+		std::sort(made.begin(), made.end());
+		for (const fs::path &f : made) {
+			fs::path to = dest / f.filename();
+			if (fs::exists(to, ec))
+				fs::remove(to, ec);
+			fs::rename(f, to, ec);
+			if (ec) {
+				ctx.error = ec.message();
+				for (const std::string &o : outputs)
+					RemoveFile(o);
+				return fail("can't move " + PathU8(f.filename()) + " into place");
+			}
+			outputs.push_back(PathU8(to));
+		}
+		fs::remove_all(tempDir, ec);
+		tempDir.clear();
+	}
+	res.verify = s.engine.verify ? "OK" : "off";
+	res.outputSize = 0;
+	for (const std::string &o : outputs)
+		res.outputSize += fs::file_size(U8Path(o), ec);
+
+	if (s.out.deleteSource && !replacingSource) {
+		int removed = 0;
+		for (const std::string &src : sources) {
+			bool isOutput = false;
+			for (const std::string &o : outputs)
+				isOutput |= SamePath(src, o);
+			if (!isOutput) {
+				RemoveFile(src);
+				++removed;
+			}
+		}
+		res.message = removed > 1 ? Fmt("source deleted (%d files)", removed) : "source deleted";
+	}
+	finish(JobState::Done, "");
+}
+
 }  // namespace
 
 std::string PlanZarOutputPath(const ZarSpec &spec, const Settings &s) {
@@ -1083,7 +1264,7 @@ void RunJob(Job &job) {
 	};
 
 	Format S = in.format == Format::Unknown ? DetectFormat(in.path) : in.format;
-	const Format T = job.target.load();
+	Format T = job.target.load();
 	if (S == Format::Unknown)
 		return finish(JobState::Failed, "not a recognised disc image");
 	if (!FormatAvailable(S) || !FormatAvailable(T))
@@ -1092,8 +1273,19 @@ void RunJob(Job &job) {
 		return finish(JobState::Skipped, "already an ISO");
 	// Formats that only hold some platforms' discs (RVZ/WIA: GameCube and Wii; PBP: PSP).
 	ImageInfo info = InspectImage(in.path);
+	if (IsCdImageFormat(S) && !info.error.empty())
+		return finish(JobState::Failed, info.error);
+	// A batch for CSO / PBP / RVZ with CD images in it: those become CD CHDs (cue/bin when extracting).
+	if (info.platform == Platform::CD && T != Format::CHD && T != Format::CUE) {
+		const Format to = T == Format::ISO ? Format::CUE : Format::CHD;
+		Log(LogLevel::Info, Fmt("%s: a CD image, making %s instead of %s", in.path.c_str(), FormatName(to), FormatName(T)));
+		T = to;
+		job.target = T;
+	}
 	if (std::string why = TargetRejects(T, info.platform); !why.empty())
 		return finish(JobState::Skipped, why);
+	if (T == Format::CUE && info.platform != Platform::CD)
+		return finish(JobState::Skipped, info.error.empty() ? "CUE/BIN only holds CD images" : info.error);
 
 	// Where it goes.
 	std::string final = PlanOutputPath(in, T, s);
@@ -1129,6 +1321,9 @@ void RunJob(Job &job) {
 		return finish(JobState::Failed, "can't create " + PathU8(U8Path(final).parent_path()) + ": " + ec.message());
 	const std::string part = final + ".part";
 	RemoveFile(part);
+
+	if (info.platform == Platform::CD)
+		return RunCdJob(job, S, T, info, final, part, replacingSource, createdDirs, res, finish);
 
 	// Rough free space check (the output is at most about the ISO's size).
 	res.isoSize = info.isoSize;

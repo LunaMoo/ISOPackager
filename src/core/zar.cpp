@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <set>
 
+#include <chdmodern/chdmodern.h>
 #include <zarchive/zarchivereader.h>
 #include <zarchive/zarchivewriter.h>
 
@@ -368,6 +370,51 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 	};
 
 	const Format discTarget = z.discFormat;
+
+	// CD images (a cue sheet and its tracks, CloneCD, Alcohol, raw .bin) become one CD CHD each
+	// when discs are converted, whichever format was chosen (CD images only go to CHD); their
+	// track files go in with them.
+	auto pathKey = [](const std::string &p) {
+		std::error_code ec;
+		std::string k = PathU8(fs::absolute(U8Path(p), ec).lexically_normal());
+#ifdef _WIN32
+		k = ToLower(k);
+#endif
+		return k;
+	};
+	std::set<std::string> cdConvert, cdParts;
+	if (z.compressDiscs && discTarget != Format::ISO) {
+		for (const ZarEntry &e : entries) {
+			if (e.isDir || !IsCdImageFormat(e.disc) || !(IsCdDescriptor(e.source) || HasRawCdSync(e.source)))
+				continue;
+			ImageInfo info = InspectImage(e.source);
+			if (info.platform != Platform::CD || !info.error.empty()) {
+				Log(LogLevel::Warning, Fmt("%s: %s, adding it as it is", e.source.c_str(), info.error.c_str()));
+				continue;
+			}
+			std::vector<std::string> files;
+			chdm_cd_image_files(e.source.c_str(), [](void *u, const char *f) { ((std::vector<std::string> *)u)->push_back(f); }, &files);
+			// A raw .bin read through a cue sheet is a track of that image, not one of its own.
+			if (!IsCdDescriptor(e.source) && (files.empty() || pathKey(files.front()) != pathKey(e.source)))
+				continue;
+			cdConvert.insert(pathKey(e.source));
+			for (const std::string &f : files)
+				if (pathKey(f) != pathKey(e.source))
+					cdParts.insert(pathKey(f));
+		}
+		for (const std::string &p : cdParts)
+			cdConvert.erase(p);  // a track file of a cue sheet in the archive isn't an image of its own
+	}
+	uint32_t cdCodecList[4] = {};
+	const uint32_t *cdCodecs = nullptr;
+	{
+		std::vector<uint32_t> cd = CdCodecsFor(s.chd);
+		for (size_t i = 0; i < 4 && i < cd.size(); ++i)
+			cdCodecList[i] = cd[i];
+		if (!cd.empty())
+			cdCodecs = cdCodecList;
+	}
+
 	for (const ZarEntry &e : entries) {
 		if (cancelled())
 			return false;
@@ -380,10 +427,64 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 		StreamHash h;
 		bool handled = false;
 
+		if (!e.isDir && cdParts.count(pathKey(e.source))) {
+			done += e.size;  // in the CD CHD of the image it belongs to
+			report01(0, 0);
+			continue;
+		}
+		if (!e.isDir && cdConvert.count(pathKey(e.source))) {
+			const std::string name = Unique(CompressedName(e.archivePath, Format::CHD, s), used);
+			if (progress.onPhase)
+				progress.onPhase(true, name);
+			Clock::time_point t0 = Clock::now();
+			fs::path tdir = s.engine.tempDir.empty() ? U8Path(outPath).parent_path() : U8Path(s.engine.tempDir);
+			std::error_code ec;
+			fs::create_directories(tdir, ec);
+			const std::string temp = PathU8(tdir / U8Path(GameName(e.source) + ".isopk-temp.chd"));
+			struct TempCleanup {
+				std::string path;
+				~TempCleanup() {
+					std::error_code e2;
+					fs::remove(U8Path(path), e2);
+				}
+			} cleanup{ temp };
+			struct Cb {
+				OpContext *ctx;
+				std::function<void(double)> f;
+			} cb{ &ctx, [&](double f) { report01(e.size, 0.9 * f); } };
+			auto chdProgress = [](void *u, double f) -> int {
+				Cb *c = (Cb *)u;
+				c->f(f);
+				return c->ctx->Cancelled() ? 1 : 0;
+			};
+			int rc = chdm_create_cd(e.source.c_str(), temp.c_str(), 0, cdCodecs, chdProgress, &cb);
+			if (rc == CHDM_OK && s.engine.verify)
+				rc = chdm_verify_cd(e.source.c_str(), temp.c_str(), nullptr, nullptr);
+			if (rc != CHDM_OK) {
+				if (rc == CHDM_ERR_CANCELLED || ctx.Cancelled()) {
+					ctx.cancelled = true;
+					return fail("cancelled");
+				}
+				return fail(Fmt("compressing %s to a CD CHD: %s", e.source.c_str(), chdm_last_error_message()));
+			}
+			report->compressDiscSecs += SecondsSince(t0);
+			if (progress.onPhase)
+				progress.onPhase(false, name);
+			if (!w.StartNewFile(name.c_str(), false))
+				return fail("can't add " + name + " to the archive");
+			uint64_t n = 0;
+			if (!appendFile(temp, h, e.size, 0.9, 1.0, &n))
+				return false;
+			written.archivePath = name;
+			written.size = n;
+			report->discsConverted++;
+			handled = true;
+		}
+
 		// Discs converted to the chosen format first: a plain ISO is compressed, any other format is
 		// extracted to an ISO in RAM and that is compressed (also into RAM); the result goes into
 		// the archive stored. A temporary file stands in for whichever step doesn't fit the RAM budget.
-		const bool isDisc = e.disc != Format::Unknown && e.disc != Format::ZAR;
+		const bool isDisc = !handled && e.disc != Format::Unknown && e.disc != Format::ZAR && !IsCdImageFormat(e.disc);
 		const bool alreadyTarget = z.compressDiscs && isDisc && e.disc == discTarget;
 		if (z.compressDiscs && isDisc && !alreadyTarget && FormatAvailable(discTarget) && discTarget != Format::ISO && FormatAvailable(e.disc)) {
 			ImageInfo info = InspectImage(e.source);

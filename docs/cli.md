@@ -28,6 +28,7 @@ isopackager-cli iso Trails.zar               # unpacked into the folder Trails\
   - [CHD](#chd)
   - [EBOOT.PBP](#ebootpbp)
   - [RVZ and WIA](#rvz-and-wia)
+  - [CD images: chd and cue](#cd-images-chd-and-cue)
 - [How images are converted](#how-images-are-converted)
 - [ZArchive: zar](#zarchive-zar)
 - [Where outputs go](#where-outputs-go)
@@ -50,11 +51,12 @@ The command is usually the format you want to make.
 | `zso` | ZISO (`.zso`) | lz4: the fastest to read |
 | `cso2` | CISO v2 (`.cso`) | experimental: deflate or lz4 per block |
 | `dax` | DAX (`.dax`) | old PSP custom firmware |
-| `chd` | MAME CHD, DVD type (`.chd`) | PPSSPP and other emulators |
+| `chd` | MAME CHD (`.chd`) | PPSSPP and other emulators; CD images become CD CHDs |
 | `pbp` | PSN EBOOT.PBP | PSP games only |
 | `rvz` | RVZ (`.rvz`) | GameCube and Wii discs only (Dolphin) |
 | `wia` | WIA (`.wia`) | GameCube and Wii discs only (wit, Dolphin) |
-| `iso` | plain ISO | extracts any image; a `.zar` is unpacked into a folder. Alias: `extract` |
+| `cue` | cue sheet + `.bin` tracks | CD images and CD CHDs only |
+| `iso` | plain ISO | extracts any image; a `.zar` is unpacked into a folder, a CD image to cue/bin. Alias: `extract` |
 | `zar` | ZArchive (`.zar`) | several discs, DLC folders and anything else in one file |
 | `verify` | – | decodes images and reports problems; checks a `.zar`'s SHA-256 |
 | `info` | – | format, sizes, compression, disc ID and title |
@@ -66,7 +68,9 @@ The command is usually the format you want to make.
 `--to` it makes CSO.
 
 Inputs can be any mix of files and folders. Folders are searched, with their subfolders, for
-`.iso`, `.cso`, `.zso`, `.dax`, `.chd`, `.pbp`, `.rvz`, `.wia`, `.gcm`, `.zar` and `.wua` files.
+`.iso`, `.cso`, `.zso`, `.dax`, `.chd`, `.pbp`, `.rvz`, `.wia`, `.gcm`, `.zar` and `.wua` files, and CD
+images (`.cue`, `.ccd`, `.mds`, `.gdi`, `.nrg`, raw `.bin` / `.img`; a cue sheet's track files are part of it, not
+images of their own).
 Images already in the target format are converted again with the new settings, as long as the
 output doesn't replace the source (see [Where outputs go](#where-outputs-go)).
 
@@ -195,6 +199,28 @@ RVZ and WIA hold GameCube and Wii discs only; other discs are skipped with a mes
 ```sh
 isopackager-cli rvz --method zstd --level 19 --block 256K D:\Wii
 isopackager-cli wia --method lzma --level 9 game.iso
+```
+
+### CD images: chd and cue
+
+CD images — cue sheets (any number of files, AUDIO tracks, INDEX 00/01, PREGAP, MODE2/2336; a
+FILE line naming a missing file falls back to the cue sheet's own name), CloneCD `.ccd` + `.img`,
+Alcohol 120% `.mds` + `.mdf` (subchannel data skipped, gaps between tracks kept), `.gdi`, `.nrg`,
+bare raw `.bin` / `.img` / `.iso` — become CD CHDs like `chdman createcd`: 8 frames per hunk,
+`cdlz`, `cdzl` and `cdfl` by default. `chd --method` picks CD codecs too: `lzma` → `cdlz`, `zlib` → `cdzl`,
+`zstd` → `cdzs`, `flac` → `cdfl` (`huff` has no CD variant; `--block` doesn't apply). A bare `.bin` is
+read through the cue sheet that names it, or the `.ccd` / `.mds` of the same name.
+
+`cue` (or `iso`) writes a CD CHD — or any of the images above — back as a cue sheet with one `.bin` per
+track, named the way Redump does (`Game (Track 1).bin`), or one `Game.bin` with `--single-bin`. The
+output is decoded again and compared frame by frame, like every other conversion. CD images in a
+batch for another format (`cso`, `pbp`, ...) are made into CD CHDs instead; `--delete-source`
+deletes every file of the image. In `zar --discs FMT`, CD images go in as CD CHDs.
+
+```sh
+isopackager-cli chd D:\PS1                       # every cue/bin, ccd, mds in it -> CD CHDs
+isopackager-cli cue --single-bin "Game.chd"      # Game.cue + Game.bin
+isopackager-cli verify --against Game.cue Game.chd
 ```
 
 ## How images are converted

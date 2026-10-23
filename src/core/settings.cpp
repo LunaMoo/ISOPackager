@@ -172,6 +172,20 @@ std::string ChdSettings::Describe() const {
 	return Fmt("%s hunk %s", CodecsString().c_str(), (h % 1024 ? Fmt("%u", h) : Fmt("%uK", h / 1024)).c_str());
 }
 
+std::vector<uint32_t> CdCodecsFor(const ChdSettings &c) {
+	std::vector<uint32_t> out;
+	for (uint32_t codec : c.codecs) {
+		uint32_t cd = 0;
+		if (codec == FourCC("lzma")) cd = FourCC("cdlz");
+		else if (codec == FourCC("zlib")) cd = FourCC("cdzl");
+		else if (codec == FourCC("zstd")) cd = FourCC("cdzs");
+		else if (codec == FourCC("flac")) cd = FourCC("cdfl");
+		if (cd && std::find(out.begin(), out.end(), cd) == out.end())
+			out.push_back(cd);
+	}
+	return out;
+}
+
 const std::vector<std::string> &ChdCodecChoices() {
 	static const std::vector<std::string> list = { "lzma", "zlib", "zstd", "huff", "flac" };
 	return list;
@@ -391,6 +405,8 @@ bool Settings::Load(const std::string &path) {
 	if (!s.empty())
 		chd.SetCodecs(s);
 
+	boolean("cue.split", cue.splitBins);
+
 	{
 		uint32_t c = (uint32_t)pbp.compress;
 		u32("pbp.compress", c);
@@ -489,6 +505,7 @@ bool Settings::Save(const std::string &path) const {
 		t += Fmt("%s.zopfli_splits=%u\n%s.precheck=%g\n%s.force_all=%d\n", k, c.zopfliSplits, k, c.precheck, k, c.forceAll);
 	}
 	t += Fmt("chd.hunk=%u\nchd.codecs=%s\n", chd.hunkBytes, chd.CodecsString().c_str());
+	t += Fmt("cue.split=%d\n", cue.splitBins);
 	t += Fmt("pbp.compress=%d\npbp.content_id=%s\npbp.startdat=%s\npbp.trim=%d\npbp.verify_macs=%d\npbp.layout=%s\n", pbp.compress,
 		pbp.contentId.c_str(), pbp.startDatPng.c_str(), pbp.trimOnExtract, pbp.verifyMacs, pbp.layout == PbpLayout::File ? "file" : "folder");
 	for (Format f : { Format::RVZ, Format::WIA }) {

@@ -173,9 +173,9 @@ int main(int argc, char **argv) {
 	if (zenity || kdialog) {
 		hooks.pickFiles = [zenity](std::vector<std::string> *out) {
 			return RunDialog(zenity ? "zenity --file-selection --multiple --separator='\n' --title='Add disc images' "
-									  "--file-filter='Disc images | *.iso *.ISO *.gcm *.GCM *.cso *.CSO *.zso *.ZSO *.dax *.DAX *.chd *.CHD *.pbp *.PBP *.wia *.WIA *.rvz *.RVZ' "
+									  "--file-filter='Disc images | *.iso *.ISO *.gcm *.GCM *.cso *.CSO *.zso *.ZSO *.dax *.DAX *.chd *.CHD *.pbp *.PBP *.wia *.WIA *.rvz *.RVZ *.cue *.CUE *.ccd *.CCD *.mds *.MDS *.gdi *.GDI *.nrg *.NRG *.bin *.BIN *.img *.IMG' "
 									  "--file-filter='All files | *' 2>/dev/null"
-									: "kdialog --getopenfilename --multiple --separate-output . 'Disc images (*.iso *.gcm *.cso *.zso *.dax *.chd *.pbp *.wia *.rvz)' "
+									: "kdialog --getopenfilename --multiple --separate-output . 'Disc images (*.iso *.gcm *.cso *.zso *.dax *.chd *.pbp *.wia *.rvz *.cue *.ccd *.mds *.gdi *.nrg *.bin *.img)' "
 									  "2>/dev/null",
 				out);
 		};
