@@ -16,6 +16,7 @@
 #include "core/formats.h"
 
 struct chdm_file;  // CHDmodern
+struct chdm_cd;
 struct irvz_file;  // iRVZ
 
 namespace isopk {
@@ -82,6 +83,37 @@ private:
 	chdm_file *file_ = nullptr;
 	uint64_t size_ = 0;
 };
+
+// The user data of a CD CHD's only track as a plain image of 2048-byte sectors: how a DVD's
+// image that went into a CD CHD ("chdman createcd" on a PSP or PS2 DVD ISO) reads as that ISO
+// again. Open() takes any CD CHD with exactly one data track (MODE1 or MODE2 form 1, cooked or
+// raw sectors); whether that is a DVD's image is for CdChdHoldsDvd to decide.
+class CdDataReader : public ImageReader {
+public:
+	~CdDataReader() override;
+	bool Open(const std::string &path);
+	uint64_t Size() const override { return size_; }
+	bool ReadAt(uint64_t offset, void *buf, size_t len) override;
+	uint32_t Sectors() const { return count_; }
+
+private:
+	bool LoadSector(uint32_t index);
+
+	chdm_file *file_ = nullptr;
+	chdm_cd *cd_ = nullptr;
+	uint32_t first_ = 0, count_ = 0;  // first logical sector of the track, user sectors in it
+	uint32_t skip_ = 0;               // bytes before the user data in a stored sector
+	uint64_t size_ = 0;
+	uint32_t cached_ = UINT32_MAX;
+	uint8_t sector_[2352 + 96] = {};
+};
+
+// Whether the CD CHD at path holds a DVD's image rather than a CD: one data track whose
+// contents are a PSP UMD, a GameCube / Wii disc, a UDF volume (PS2 and other DVD-ROMs), or more
+// than any CD holds. reader (optional) gets the opened track; platform, discId and title what
+// ReadDiscInfo found in it.
+bool CdChdHoldsDvd(const std::string &path, std::unique_ptr<CdDataReader> *reader = nullptr, Platform *platform = nullptr,
+	std::string *discId = nullptr, std::string *title = nullptr);
 
 // WIA and RVZ (iRVZ).
 class IrvzImageReader : public ImageReader {
@@ -240,7 +272,7 @@ private:
 
 // Reads UMD_DATA.BIN and PSP_GAME/PARAM.SFO through the ISO9660 file system.
 // Disc ID, title and platform: PSP (UMD_DATA.BIN, PSP_GAME/PARAM.SFO), GameCube / Wii (disc
-// header), or another ISO9660 image.
+// header), PS2 (BOOT2 in SYSTEM.CNF, the disc ID from its boot file), or another ISO9660 image.
 bool ReadDiscInfo(ImageReader &image, std::string *discId, std::string *title, Platform *platform = nullptr);
 // ISO9660 volume size in bytes (the size a good dump has), or 0.
 uint64_t IsoVolumeSize(ImageReader &image);

@@ -38,12 +38,13 @@ bool IsCdImageFormat(Format f);  // CUE, CDIMG, PSX (PSOne EBOOTs)
 bool HasRawCdSync(const std::string &utf8Path);
 // .cue, .ccd, .mds, .gdi, .nrg, .toc: the file that describes a CD image's tracks.
 bool IsCdDescriptor(const std::string &utf8Path);
-// A CD image or a CD / GD-ROM CHD: these convert only to CD CHDs and cue/bin.
+// A CD image or a CD / GD-ROM CHD: these convert only to CD CHDs and cue/bin. Not a CD CHD
+// holding a DVD's image (see CdChdHoldsDvd in image.h): that converts like any other DVD image.
 bool IsCdSource(const std::string &utf8Path, Format f);
 
 // What kind of disc an image holds; decides which formats can store it (RVZ/WIA only take
 // GameCube and Wii discs, EBOOT.PBP only PSP games).
-enum class Platform { Unknown, PSP, GameCube, Wii, OtherIso, CD };
+enum class Platform { Unknown, PSP, GameCube, Wii, OtherIso, CD, PS2 };
 const char *PlatformLabel(Platform p);
 // Empty when target can hold a disc of this platform, otherwise why not.
 std::string TargetRejects(Format target, Platform p);
@@ -70,6 +71,7 @@ struct ImageInfo {
 	Platform platform = Platform::Unknown;
 	std::string error;         // set when the image could not be inspected
 	uint32_t cdTracks = 0;     // CD images and CD CHDs
+	bool dvdInCdChd = false;   // a CD CHD holding a DVD's image: reads and converts as that DVD image
 };
 
 // Reads the header and, where the format allows random access, the disc ID and title.

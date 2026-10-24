@@ -218,6 +218,12 @@ output is decoded again and compared frame by frame, like every other conversion
 batch for another format (`cso`, `pbp`, ...) are made into CD CHDs instead; `--delete-source`
 deletes every file of the image. In `zar --discs FMT`, CD images go in as CD CHDs.
 
+A CD CHD that holds a DVD's image — a PSP or PS2 DVD ISO someone ran through `chdman createcd` — is
+not treated as a CD: when its only track holds a PSP UMD, a GameCube / Wii disc, a UDF volume or
+more than 99 minutes of sectors, `info` shows the platform, disc ID and title, and every command
+reads it as that ISO. `chd` turns it into a proper DVD CHD, `iso` extracts the ISO, `cso` / `pbp`
+etc. work as for any ISO. PS1 and PS2 CD games in CD CHDs stay CDs.
+
 ```sh
 isopackager-cli chd D:\PS1                       # every cue/bin, ccd, mds in it -> CD CHDs
 isopackager-cli cue --single-bin "Game.chd"      # Game.cue + Game.bin

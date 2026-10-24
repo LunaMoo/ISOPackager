@@ -204,4 +204,68 @@ inline std::vector<uint8_t> MakeGameCubeDisc(uint32_t sizeMB, const std::string 
 	return d;
 }
 
+// A small PS2 disc: ISO9660 with SYSTEM.CNF (BOOT2) and a data file, plus a UDF volume
+// recognition sequence after the ISO descriptors when udf (PS2 DVDs have one, PS2 CDs don't).
+inline std::vector<uint8_t> MakePs2Iso(uint32_t sizeKB, bool udf, const std::string &boot = "SLUS_203.12") {
+	const uint32_t S = 2048;
+	// 16 PVD, 17 terminator, 18-20 BEA01 / NSR02 / TEA01 (or zeros), 21 root, 22 SYSTEM.CNF, 23.. DATA.BIN.
+	std::string cnf = "BOOT2 = cdrom0:\\" + boot + ";1\r\nVER = 1.00\r\nVMODE = NTSC\r\n";
+	const uint32_t dataBytes = sizeKB * 1024;
+	const uint32_t total = 23 + (dataBytes + S - 1) / S;
+	std::vector<uint8_t> iso((size_t)total * S, 0);
+	std::mt19937 rng(7);
+	for (uint32_t i = 0; i < dataBytes; ++i)
+		iso[23 * S + i] = i % 3 ? (uint8_t)rng() : 0;
+	memcpy(&iso[22 * S], cnf.data(), cnf.size());
+	std::vector<uint8_t> root(S, 0);
+	size_t p = 0;
+	p += Record(root, p, 21, S, true, std::string(1, '\0'));
+	p += Record(root, p, 21, S, true, std::string(1, '\1'));
+	p += Record(root, p, 23, dataBytes, false, "DATA.BIN;1");
+	p += Record(root, p, 22, (uint32_t)cnf.size(), false, "SYSTEM.CNF;1");
+	memcpy(&iso[21 * S], root.data(), S);
+	std::vector<uint8_t> pvd(S, 0);
+	pvd[0] = 1;
+	memcpy(&pvd[1], "CD001", 5);
+	pvd[6] = 1;
+	memcpy(&pvd[8], "PLAYSTATION", 11);
+	Put32Both(pvd, 80, total);
+	Put16Both(pvd, 120, 1);
+	Put16Both(pvd, 124, 1);
+	Put16Both(pvd, 128, (uint16_t)S);
+	Record(pvd, 156, 21, S, true, std::string(1, '\0'));
+	pvd[881] = 1;
+	memcpy(&iso[16 * S], pvd.data(), S);
+	iso[17 * S] = 255;
+	memcpy(&iso[17 * S + 1], "CD001", 5);
+	iso[17 * S + 6] = 1;
+	if (udf) {
+		const char *vrs[] = { "BEA01", "NSR02", "TEA01" };
+		for (int i = 0; i < 3; ++i) {
+			memcpy(&iso[(18 + i) * S + 1], vrs[i], 5);
+			iso[(18 + i) * S + 6] = 1;
+		}
+	}
+	return iso;
+}
+
+// 2048-byte sectors as raw 2352-byte CD sectors: MODE1 (sync, header, data) or MODE2 form 1
+// (sync, header, XA subheader, data). EDC/ECC left zero: nothing here checks them.
+inline std::vector<uint8_t> RawSectors(const std::vector<uint8_t> &iso, int mode) {
+	const size_t n = iso.size() / 2048;
+	std::vector<uint8_t> raw(n * 2352, 0);
+	for (size_t i = 0; i < n; ++i) {
+		uint8_t *s = &raw[i * 2352];
+		memset(s + 1, 0xff, 10);
+		const uint32_t f = (uint32_t)i + 150;
+		auto bcd = [](uint32_t v) { return (uint8_t)((v / 10) << 4 | (v % 10)); };
+		s[12] = bcd(f / 4500);
+		s[13] = bcd((f / 75) % 60);
+		s[14] = bcd(f % 75);
+		s[15] = (uint8_t)mode;
+		memcpy(s + (mode == 1 ? 16 : 24), &iso[i * 2048], 2048);
+	}
+	return raw;
+}
+
 }  // namespace testiso

@@ -35,6 +35,11 @@ Built on these libraries, linked statically from the submodules in `external/`:
   same name, and a folder scan queues each image once, by its descriptor. CD images in a batch
   for another format become CD CHDs (cue/bin when extracting); deleting the source deletes all
   of its files.
+- **DVD images in CD CHDs** (a PSP or PS2 DVD ISO put through `chdman createcd`): a CD CHD whose
+  one data track is a PSP UMD, a GameCube / Wii disc, a UDF volume (PS2 and other DVD-ROMs) or
+  more than a CD holds is shown with its platform, disc ID and title, and converts as the ISO it
+  holds: `chd` makes a proper DVD CHD of it, `iso` gives the ISO back, and CSO, PBP and the rest
+  work as for any ISO. CD games (PS1, PS2 CDs) in CD CHDs stay CDs.
 - **PSOne EBOOT.PBPs** from PlayStation discs, from any CD image or CD CHD. They are in popstation's
   layout: deflated blocks at level 9 by default, the TOC with audio tracks and pregaps, and the disc
   ID from SYSTEM.CNF. Files named `Game (Disc 1)` to `(Disc 5)` go into one EBOOT. A PBP job on CD

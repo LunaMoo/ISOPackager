@@ -524,6 +524,35 @@ bool CompressToMemory(ImageReader &iso, Format target, const Settings &s, Memory
 	}
 }
 
+// A whole reader into w, 8 MiB at a time (a plain ISO, or a DVD's image in a CD CHD).
+static bool CopyImage(ImageReader &r, const std::string &name, ImageWriter &w, OpContext &ctx) {
+	const uint64_t size = r.Size();
+	if (!w.Begin(size)) {
+		SetError(ctx, w.Error());
+		return false;
+	}
+	std::vector<uint8_t> buf(8u << 20);
+	for (uint64_t pos = 0; pos < size; pos += buf.size()) {
+		if (ctx.Cancelled()) {
+			ctx.cancelled = true;
+			SetError(ctx, "cancelled");
+			return false;
+		}
+		size_t n = (size_t)std::min<uint64_t>(buf.size(), size - pos);
+		if (!r.ReadAt(pos, buf.data(), n)) {
+			SetError(ctx, name + ": " + r.Error());
+			return false;
+		}
+		if (!w.WriteAt(pos, buf.data(), n)) {
+			SetError(ctx, w.Error());
+			return false;
+		}
+		if (ctx.progress)
+			ctx.progress((double)(pos + n) / (double)size);
+	}
+	return w.Finish(size);
+}
+
 bool DecompressToFile(const std::string &in, Format format, const Settings &s, const std::string &iso, bool trimPbp, OpContext &ctx) {
 	switch (format) {
 #ifdef ISOPK_WITH_CSO
@@ -537,8 +566,13 @@ bool DecompressToFile(const std::string &in, Format format, const Settings &s, c
 		return McsoResult(rc, err, ctx);
 	}
 #endif
-	case Format::CHD:
+	case Format::CHD: {
+		if (CdChdHoldsDvd(in)) {
+			FileWriter w(iso);
+			return DecompressToWriter(in, format, s, w, trimPbp, ctx);
+		}
 		return ChdResult(chdm_extract_raw(in.c_str(), iso.c_str(), &ChdProgress, &ctx), ctx);
+	}
 	case Format::PBP: {
 		PbpJob job(ctx);
 		ipbp_pbp2iso_options o;
@@ -577,6 +611,9 @@ bool DecompressToWriter(const std::string &in, Format format, const Settings &s,
 	}
 #endif
 	case Format::CHD: {
+		std::unique_ptr<CdDataReader> dvd;
+		if (CdChdHoldsDvd(in, &dvd))  // a DVD's image in a CD CHD: its sectors' user data
+			return CopyImage(*dvd, in, w, ctx);
 		chdm_writer cw{ &w, &ChdBegin, &ChdWrite };
 		return ChdResult(chdm_extract_raw_io(in.c_str(), &cw, &ChdProgress, &ctx), ctx, &w) && w.Finish(UINT64_MAX);
 	}
@@ -588,36 +625,12 @@ bool DecompressToWriter(const std::string &in, Format format, const Settings &s,
 		return job.Result(ipbp_pbp_to_iso_writer(job.job, in.c_str(), &pw, &o), &w);
 	}
 	case Format::ISO: {
-		File f;
-		if (!f.Open(in, File::Read)) {
-			SetError(ctx, in + ": " + f.LastError());
+		FileImageReader r;
+		if (!r.Open(in)) {
+			SetError(ctx, in + ": " + r.Error());
 			return false;
 		}
-		const uint64_t size = f.Size();
-		if (!w.Begin(size)) {
-			SetError(ctx, w.Error());
-			return false;
-		}
-		std::vector<uint8_t> buf(8u << 20);
-		for (uint64_t pos = 0; pos < size; pos += buf.size()) {
-			if (ctx.Cancelled()) {
-				ctx.cancelled = true;
-				SetError(ctx, "cancelled");
-				return false;
-			}
-			size_t n = (size_t)std::min<uint64_t>(buf.size(), size - pos);
-			if (!f.ReadExact(pos, buf.data(), n)) {
-				SetError(ctx, in + ": " + f.LastError());
-				return false;
-			}
-			if (!w.WriteAt(pos, buf.data(), n)) {
-				SetError(ctx, w.Error());
-				return false;
-			}
-			if (ctx.progress)
-				ctx.progress((double)(pos + n) / (double)size);
-		}
-		return w.Finish(size);
+		return CopyImage(r, in, w, ctx);
 	}
 	case Format::WIA:
 	case Format::RVZ: {

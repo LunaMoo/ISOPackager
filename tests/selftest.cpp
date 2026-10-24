@@ -853,6 +853,78 @@ int main(int argc, char **argv) {
 		CHECK(r.state == JobState::Done && U8Path(r.outputPath).extension() == ".chd", "CD CHD in a CSO batch: %s", r.message.c_str());
 		CHECK(Convert(isoPath, Format::CUE, s, PathU8(root / "cd_x")).state == JobState::Skipped, "a PSP ISO can't become cue/bin");
 
+		// DVD images in CD CHDs ("chdman createcd" on a PSP or PS2 DVD ISO): recognised as the DVD
+		// they are and converted as that ISO, to a proper DVD CHD, an ISO, CSO or PBP. CD games stay CDs.
+		{
+			fs::path dv = root / "dvd_in_cd";
+			fs::create_directories(dv, ec);
+			std::vector<uint8_t> ps2 = testiso::MakePs2Iso(900, true), ps2cd = testiso::MakePs2Iso(900, false, "SLUS_200.01");
+			put(dv / "PS2 Game.iso", ps2);
+			put(dv / "PS2 CD Game.iso", ps2cd);
+			put(dv / "PSP Raw.bin", testiso::RawSectors(iso, 1));
+			putText(dv / "PSP Raw.cue", "FILE \"PSP Raw.bin\" BINARY\n  TRACK 01 MODE1/2352\n    INDEX 01 00:00:00\n");
+			put(dv / "PS2 Mode2.bin", testiso::RawSectors(ps2, 2));
+			putText(dv / "PS2 Mode2.cue", "FILE \"PS2 Mode2.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n");
+			static const uint32_t none[4] = {};
+			struct Case {
+				std::string src, chd;
+				const std::vector<uint8_t> *data;
+				Platform platform;
+				const char *discId;
+			} cases[] = {
+				{ isoPath, PathU8(dv / "PSP Cooked.chd"), &iso, Platform::PSP, "ULUS99999" },
+				{ PathU8(dv / "PSP Raw.cue"), PathU8(dv / "PSP Raw.chd"), &iso, Platform::PSP, "ULUS99999" },
+				{ PathU8(dv / "PS2 Game.iso"), PathU8(dv / "PS2 Game.chd"), &ps2, Platform::PS2, "SLUS20312" },
+				{ PathU8(dv / "PS2 Mode2.cue"), PathU8(dv / "PS2 Mode2.chd"), &ps2, Platform::PS2, "SLUS20312" },
+			};
+			for (const Case &c : cases) {
+				const std::string label = PathU8(U8Path(c.chd).filename());
+				CHECK(chdm_create_cd(c.src.c_str(), c.chd.c_str(), 0, none, nullptr, nullptr) == CHDM_OK, "%s: createcd: %s", label.c_str(),
+					chdm_last_error_message());
+				ImageInfo di = InspectImage(c.chd);
+				CHECK(di.error.empty() && di.dvdInCdChd && di.platform == c.platform && di.discId == c.discId && di.isoSize == c.data->size(),
+					"%s info: %s, %s, %s, %llu %s", label.c_str(), PlatformLabel(di.platform), di.discId.c_str(), di.detail.c_str(),
+					(unsigned long long)di.isoSize, di.error.c_str());
+				CHECK(!IsCdSource(c.chd, Format::CHD), "%s counts as a CD", label.c_str());
+				const std::string out = PathU8(root / "dvd_out" / label);
+				JobResult r = Convert(c.chd, Format::CHD, s, PathU8(root / "dvd_out"));
+				CHECK(r.state == JobState::Done && r.verify == "OK", "%s -> CHD: %s", label.c_str(), r.message.c_str());
+				chdm_file *f = nullptr;
+				chdm_info ci{};
+				if (chdm_open(r.outputPath.c_str(), CHDM_OPEN_READ, nullptr, &f) == CHDM_OK) {
+					chdm_get_info(f, &ci);
+					chdm_close(f);
+				}
+				CHECK(ci.kind == CHDM_KIND_DVD && ci.logical_bytes == c.data->size(), "%s: the new CHD isn't a DVD CHD of the image (kind %d)",
+					label.c_str(), (int)ci.kind);
+				JobResult x = Convert(r.outputPath, Format::ISO, s, PathU8(root / "dvd_iso"));
+				std::string why;
+				CHECK(x.state == JobState::Done && SameBytes(x.outputPath, *c.data, &why), "%s -> DVD CHD -> ISO: %s %s", label.c_str(),
+					x.message.c_str(), why.c_str());
+				x = Convert(c.chd, Format::ISO, s, PathU8(root / "dvd_iso2"));
+				CHECK(x.state == JobState::Done && U8Path(x.outputPath).extension() == ".iso" && SameBytes(x.outputPath, *c.data, &why),
+					"%s -> ISO: %s %s %s", label.c_str(), x.outputPath.c_str(), x.message.c_str(), why.c_str());
+				if (c.platform == Platform::PSP) {
+					x = Convert(c.chd, Format::PBP, s, PathU8(root / "dvd_pbp"));
+					CHECK(x.state == JobState::Done && x.verify == "OK" && ToLower(PathU8(U8Path(x.outputPath).filename())) == "eboot.pbp" &&
+							  DetectFormat(x.outputPath) == Format::PBP,
+						"%s -> PBP: %s %s", label.c_str(), x.outputPath.c_str(), x.message.c_str());
+				} else {
+					CHECK(Convert(c.chd, Format::PSX, s, PathU8(root / "dvd_x")).state == JobState::Skipped, "%s: a PS2 DVD can't be a PSOne EBOOT",
+						label.c_str());
+				}
+			}
+			// A PS2 CD game (no UDF, CD sized) in a CD CHD is a CD.
+			const std::string cdChd = PathU8(dv / "PS2 CD Game.chd");
+			CHECK(chdm_create_cd(PathU8(dv / "PS2 CD Game.iso").c_str(), cdChd.c_str(), 0, none, nullptr, nullptr) == CHDM_OK, "PS2 CD createcd");
+			ImageInfo ci = InspectImage(cdChd);
+			CHECK(ci.platform == Platform::CD && !ci.dvdInCdChd && IsCdSource(cdChd, Format::CHD), "a PS2 CD game is a CD: %s",
+				PlatformLabel(ci.platform));
+			// And the plain PS2 ISO reads as PS2.
+			ImageInfo pi = InspectImage(PathU8(dv / "PS2 Game.iso"));
+			CHECK(pi.platform == Platform::PS2 && pi.discId == "SLUS20312", "PS2 ISO info: %s %s", PlatformLabel(pi.platform), pi.discId.c_str());
+		}
+
 		r = Convert(chd, Format::CUE, s, PathU8(root / "cd_cue"));
 		CHECK(r.state == JobState::Done && r.verify == "OK", "CHD -> cue: %s", r.message.c_str());
 		std::string why;

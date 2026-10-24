@@ -142,6 +142,8 @@ bool IsCdSource(const std::string &path, Format f) {
 	chdm_info ci{};
 	chdm_get_info(file, &ci);
 	chdm_close(file);
+	if (ci.kind == CHDM_KIND_CDROM && CdChdHoldsDvd(path))
+		return false;  // a DVD's image: converts like one
 	return ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM;
 }
 
@@ -152,6 +154,7 @@ const char *PlatformLabel(Platform p) {
 	case Platform::Wii: return "Wii";
 	case Platform::OtherIso: return "ISO";
 	case Platform::CD: return "CD";
+	case Platform::PS2: return "PS2";
 	default: return "";
 	}
 }
@@ -354,7 +357,17 @@ ImageInfo InspectImage(const std::string &path) {
 			}
 			info.detail = Fmt("v%u, %s, hunk %u", ci.version, codecs.empty() ? "uncompressed" : codecs.c_str(), ci.hunk_bytes);
 			chdm_close(f);
-			if (ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM)
+			std::unique_ptr<CdDataReader> dvd;
+			Platform platform = Platform::Unknown;
+			if (ci.kind == CHDM_KIND_CDROM && CdChdHoldsDvd(path, &dvd, &platform, &info.discId, &info.title)) {
+				// A DVD's image (PSP, PS2...) someone put in a CD CHD: it reads, and converts, as that
+				// image, so it can become a proper DVD CHD (or CSO, PBP...).
+				InspectCd(path, info);
+				info.platform = platform;
+				info.isoSize = dvd->Size();
+				info.dvdInCdChd = true;
+				info.detail += ", DVD data in a CD CHD";
+			} else if (ci.kind == CHDM_KIND_CDROM || ci.kind == CHDM_KIND_GDROM)
 				InspectCd(path, info);
 			else if (ci.kind == CHDM_KIND_AV)
 				info.error = "a LaserDisc / A/V CHD, not a disc image";

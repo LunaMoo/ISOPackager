@@ -223,6 +223,87 @@ bool ChdImageReader::ReadAt(uint64_t offset, void *buf, size_t len) {
 	return true;
 }
 
+// ---- CdDataReader -----------------------------------------------------------------------------
+
+CdDataReader::~CdDataReader() {
+	chdm_cd_close(cd_);
+	chdm_close(file_);
+}
+
+bool CdDataReader::Open(const std::string &path) {
+	if (chdm_open(path.c_str(), CHDM_OPEN_READ, nullptr, &file_) != CHDM_OK) {
+		error_ = chdm_last_error_message();
+		file_ = nullptr;
+		return false;
+	}
+	chdm_info info{};
+	chdm_get_info(file_, &info);
+	if (info.kind != CHDM_KIND_CDROM) {
+		error_ = "not a CD CHD";
+		return false;
+	}
+	if (chdm_cd_open(file_, &cd_) != CHDM_OK) {
+		error_ = chdm_last_error_message();
+		cd_ = nullptr;
+		return false;
+	}
+	chdm_cd_track t{};
+	if (chdm_cd_track_count(cd_) != 1 || chdm_cd_get_track(cd_, 0, &t) != CHDM_OK) {
+		error_ = "not a single-track CD";
+		return false;
+	}
+	// Where the 2048 bytes of user data sit in what the track stores per sector.
+	switch (t.type) {
+	case CHDM_CD_MODE1: case CHDM_CD_MODE2_FORM1: skip_ = 0; break;   // cooked, 2048
+	case CHDM_CD_MODE1_RAW: skip_ = 16; break;                          // sync + header
+	case CHDM_CD_MODE2: case CHDM_CD_MODE2_FORM_MIX: skip_ = 8; break;  // XA subheader
+	case CHDM_CD_MODE2_RAW: skip_ = 24; break;                          // sync + header + subheader
+	default:
+		error_ = "the track isn't 2048-byte data sectors";
+		return false;
+	}
+	if (t.data_size < skip_ + 2048 || t.data_size > 2352 || t.frames <= t.pregap) {
+		error_ = "unexpected CD track layout";
+		return false;
+	}
+	// MAME's logical sectors start at the track's index 1 (after its pregap).
+	first_ = t.logical_start;
+	count_ = t.frames - t.pregap;
+	size_ = (uint64_t)count_ * 2048;
+	return true;
+}
+
+bool CdDataReader::LoadSector(uint32_t index) {
+	if (cached_ == index)
+		return true;
+	if (chdm_cd_read_sector(cd_, first_ + index, sector_, CHDM_CD_RAW_DONTCARE) != CHDM_OK) {
+		cached_ = UINT32_MAX;
+		error_ = chdm_last_error_message();
+		return false;
+	}
+	cached_ = index;
+	return true;
+}
+
+bool CdDataReader::ReadAt(uint64_t offset, void *buf, size_t len) {
+	if (offset + len > size_) {
+		error_ = "read past the end of the image";
+		return false;
+	}
+	uint8_t *dst = (uint8_t *)buf;
+	while (len > 0) {
+		const uint32_t index = (uint32_t)(offset / 2048), at = (uint32_t)(offset % 2048);
+		const size_t n = std::min<size_t>(len, 2048 - at);
+		if (!LoadSector(index))
+			return false;
+		memcpy(dst, sector_ + skip_ + at, n);
+		dst += n;
+		offset += n;
+		len -= n;
+	}
+	return true;
+}
+
 // ---- IrvzImageReader --------------------------------------------------------------------------
 
 IrvzImageReader::~IrvzImageReader() {
@@ -273,6 +354,10 @@ std::unique_ptr<ImageReader> OpenImageReader(const std::string &path, Format for
 		break;
 	}
 	case Format::CHD: {
+		// A DVD's image in a CD CHD reads as that image (its sectors' user data).
+		std::unique_ptr<CdDataReader> cd;
+		if (CdChdHoldsDvd(path, &cd))
+			return cd;
 		auto f = std::make_unique<ChdImageReader>();
 		ok = f->Open(path);
 		r = std::move(f);
@@ -768,7 +853,72 @@ bool ReadDiscInfo(ImageReader &img, std::string *discId, std::string *title, Pla
 			}
 		}
 	}
+	if ((!platform || *platform == Platform::OtherIso) && FindInDir(img, root.lba, root.size, "SYSTEM.CNF", &e) && e.size > 0) {
+		// PS2: "BOOT2 = cdrom0:\SLUS_203.12;1" (PS1 discs say BOOT).
+		char buf[1024] = {};
+		uint32_t n = std::min<uint32_t>(e.size, sizeof(buf) - 1);
+		if (img.ReadAt((uint64_t)e.lba * 2048, buf, n)) {
+			std::string cnf(buf, strnlen(buf, n));
+			size_t at = cnf.find("BOOT2");
+			if (at != std::string::npos) {
+				if (platform)
+					*platform = Platform::PS2;
+				size_t eol = cnf.find_first_of("\r\n", at);
+				std::string line = cnf.substr(at, eol == std::string::npos ? std::string::npos : eol - at);
+				size_t from = line.find_last_of(":\\/");
+				std::string id = from == std::string::npos ? std::string() : line.substr(from + 1);
+				id = Trim(id.substr(0, id.find(';')));
+				id.erase(std::remove_if(id.begin(), id.end(), [](char c) { return c == '_' || c == '.'; }), id.end());
+				if (discId && discId->empty() && !id.empty()) {
+					*discId = id;
+					any = true;
+				}
+			}
+		}
+	}
 	return any;
+}
+
+// A UDF volume recognition sequence ("NSR02" / "NSR03" after sector 16): DVD-ROMs (PS2 DVDs
+// among them) have one, CD-ROM games don't.
+static bool HasUdf(ImageReader &img) {
+	uint8_t d[2048];
+	for (uint64_t sector = 16; sector < 64 && (sector + 1) * 2048 <= img.Size(); ++sector) {
+		if (!img.ReadAt(sector * 2048, d, sizeof(d)))
+			return false;
+		if (memcmp(d + 1, "NSR02", 5) == 0 || memcmp(d + 1, "NSR03", 5) == 0)
+			return true;
+		if (memcmp(d + 1, "TEA01", 5) == 0)
+			return false;
+		if (memcmp(d + 1, "CD001", 5) != 0 && memcmp(d + 1, "BEA01", 5) != 0 && memcmp(d + 1, "BOOT2", 5) != 0 &&
+			memcmp(d + 1, "CDW02", 5) != 0)
+			return false;  // the end of the volume descriptors
+	}
+	return false;
+}
+
+bool CdChdHoldsDvd(const std::string &path, std::unique_ptr<CdDataReader> *reader, Platform *platform, std::string *discId,
+	std::string *title) {
+	auto r = std::make_unique<CdDataReader>();
+	if (!r->Open(path))
+		return false;
+	// The longest CDs (99 minutes) hold 445,500 sectors.
+	const uint32_t kMaxCdSectors = 99 * 60 * 75;
+	Platform p = Platform::Unknown;
+	std::string id, name;
+	ReadDiscInfo(*r, &id, &name, &p);
+	const bool dvd = p == Platform::PSP || p == Platform::GameCube || p == Platform::Wii || r->Sectors() > kMaxCdSectors || HasUdf(*r);
+	if (!dvd)
+		return false;
+	if (platform)
+		*platform = p == Platform::Unknown ? Platform::OtherIso : p;
+	if (discId)
+		*discId = id;
+	if (title)
+		*title = name;
+	if (reader)
+		*reader = std::move(r);
+	return true;
 }
 
 }  // namespace isopk

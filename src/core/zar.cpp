@@ -485,7 +485,8 @@ bool WriteZArchive(const ZarSpec &spec, const std::vector<ZarEntry> &entries, co
 		// extracted to an ISO in RAM and that is compressed (also into RAM); the result goes into
 		// the archive stored. A temporary file stands in for whichever step doesn't fit the RAM budget.
 		const bool isDisc = !handled && e.disc != Format::Unknown && e.disc != Format::ZAR && !IsCdImageFormat(e.disc);
-		const bool alreadyTarget = z.compressDiscs && isDisc && e.disc == discTarget;
+		// A DVD's image in a CD CHD isn't a DVD CHD yet.
+		const bool alreadyTarget = z.compressDiscs && isDisc && e.disc == discTarget && !(e.disc == Format::CHD && CdChdHoldsDvd(e.source));
 		if (z.compressDiscs && isDisc && !alreadyTarget && FormatAvailable(discTarget) && discTarget != Format::ISO && FormatAvailable(e.disc)) {
 			ImageInfo info = InspectImage(e.source);
 			if (std::string why = TargetRejects(discTarget, info.platform); !why.empty()) {
